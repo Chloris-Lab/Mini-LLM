@@ -1,24 +1,26 @@
 # Mini-LLM
 
-Small assistants (~40M and ~150M parameters on the 32k tokenizer lineage, ~34M and
-~70M on the earlier 16k lineage) trained **end-to-end** with PyTorch — custom BPE
-tokenizer, transformer decoder architecture, pretraining and SFT, no pretrained backbone.
+Small assistants (~40M and ~150M parameters on the 32k tokenizer lineage) trained
+**end-to-end** with PyTorch — custom BPE tokenizer, transformer decoder architecture,
+pretraining and SFT, no pretrained backbone. The previous 1.0 generation (34M/70M,
+16k tokenizer) is documented in the
+[archive section](https://github.com/Mini-llm-lab/Documentation/blob/main/Mini-LLM/architecture.md#generation-10)
+of the architecture page.
 
 Training runs on NVIDIA GPUs (CUDA).
 
 The 150M **1.1** (`models/digit32k/`) is the current cloud recipe: digit-split
 tokenizer, 2048-token context, system-prompt format, hybrid math / markdown /
 multi-turn SFT, ~7B-token pretraining budget — see
-[training](../Documentation/Mini-LLM/training.md) and
-[cloud GPU](../Documentation/Mini-LLM/cloud-gpu.md).
+[training](https://github.com/Mini-llm-lab/Documentation/blob/main/Mini-LLM/training.md) and
+[cloud GPU](https://github.com/Mini-llm-lab/Documentation/blob/main/Mini-LLM/cloud-gpu.md).
 
 > Training scale translates directly into output quality: base val loss drops from
-> 3.618 (34M, ~0.2B tokens) to 3.030 (70M, ~1.4B tokens) and to 2.941 (150M, ~4.5B
-> tokens) — larger models are markedly more fluent and better formatted. Conformance
-> and factual accuracy are tracked continuously with
-> [Mini-Eval](https://github.com/Mini-llm-lab/Mini-Eval).
+> 3.030 (70M, ~1.4B tokens) to 2.941 (150M, ~4.5B tokens) — larger models are markedly
+> more fluent and better formatted. Conformance and factual accuracy are tracked
+> continuously with [Mini-Eval](https://github.com/Mini-llm-lab/Mini-Eval).
 
-**Full documentation: [../Documentation/Mini-LLM](../Documentation/Mini-LLM/README.md)**
+**Full documentation: [Mini-LLM documentation](https://github.com/Mini-llm-lab/Documentation/tree/main/Mini-LLM)**
 
 ## Quickstart
 
@@ -39,6 +41,7 @@ To speed up Hugging Face downloads, create a free token and export it before run
 `prep` or `sft`: `export HF_TOKEN=...`.
 
 Full training runs go through the cloud GPU workflow — see
-[Cloud GPU](../Documentation/Mini-LLM/cloud-gpu.md). Everything else — architecture,
-checkpoints, data sources, Hugging Face export, design notes — lives in the
-[documentation](../Documentation/Mini-LLM/README.md).
+[Cloud GPU](https://github.com/Mini-llm-lab/Documentation/blob/main/Mini-LLM/cloud-gpu.md).
+Everything else — architecture, checkpoints, data sources, Hugging Face export,
+design notes — lives in the
+[documentation](https://github.com/Mini-llm-lab/Documentation/tree/main/Mini-LLM).
