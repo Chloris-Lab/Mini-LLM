@@ -3,6 +3,7 @@ import math
 import sys
 import time
 from contextlib import nullcontext
+from dataclasses import replace
 
 import numpy as np
 import torch
@@ -133,12 +134,34 @@ def check_ids_fit(train, val, cfg):
         )
 
 
-def pretrain(steps=5000, resume=False, init=None, size="34M", batch=None, accum=None, lr=None,
-             save_every=None, milestone_every=None, device="auto", teacher=None,
-             kd_weight=0.5, kd_temp=2.0):
+def resolve_cfg(size, dim=None, layers=None, heads=None, ffn=None, vocab=None, ctx=None):
+    """--size preset as the base, then any architecture flag passed explicitly."""
     cfg = get_preset(size)
+    changed = {
+        k: v
+        for k, v in {"dim": dim, "layers": layers, "heads": heads, "ffn": ffn,
+                     "vocab": vocab, "ctx": ctx}.items()
+        if v is not None
+    }
+    if changed:
+        cfg = replace(cfg, **changed)
+    if cfg.dim % cfg.heads != 0:
+        sys.exit(f"dim ({cfg.dim}) must be divisible by heads ({cfg.heads})")
+    if any(v is not None and v <= 0 for v in changed.values()):
+        sys.exit("architecture overrides must be positive integers")
+    return cfg
+
+
+def pretrain(steps=5000, resume=False, init=None, size="40M", dim=None, layers=None, heads=None,
+             ffn=None, vocab=None, ctx=None, batch=None, accum=None, lr=None,
+             lr_cont=None, lr_min=None, warmup=None, save_every=None, milestone_every=None,
+             device="auto", teacher=None, kd_weight=0.5, kd_temp=2.0):
+    cfg = resolve_cfg(size, dim, layers, heads, ffn, vocab, ctx)
     hp = HPARAMS[size]
-    lr_max, lr_cont, lr_min, warmup = hp["lr_max"], hp["lr_cont"], hp["lr_min"], hp["warmup"]
+    lr_max = hp["lr_max"] if lr is None else lr
+    lr_cont = hp["lr_cont"] if lr_cont is None else lr_cont
+    lr_min = hp["lr_min"] if lr_min is None else lr_min
+    warmup = hp["warmup"] if warmup is None else warmup
     dev = resolve_device(device)
     if dev == "cuda":
         torch.set_float32_matmul_precision("high")
@@ -242,7 +265,7 @@ def pretrain(steps=5000, resume=False, init=None, size="34M", batch=None, accum=
     print(f"train {len(train) / 1e6:.1f}M tokens | {total_toks / max(1, len(train)):.1f} passes")
     if total_toks > 1.1 * len(train):
         print(f"warning: total tokens exceed 1.1x train.bin size ({len(train) / 1e6:.1f}M)")
-    print(f"lr peak {lr_peak:g} | warmup {warmup}")
+    print(f"lr: peak {lr_peak:g} | cont {lr_cont:g} | min {lr_min:g} | warmup {warmup}")
 
     n_seen = start * batch * accum
     epoch, pos = divmod(n_seen, n_win)
@@ -379,10 +402,19 @@ def main():
     ap.add_argument("steps", type=int, nargs="?", default=5000)
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--init")
-    ap.add_argument("--size", default="34M")
+    ap.add_argument("--size", default="40M")
+    ap.add_argument("--dim", type=int, default=None, help="model width override")
+    ap.add_argument("--layers", type=int, default=None, help="depth override")
+    ap.add_argument("--heads", type=int, default=None, help="attention heads override")
+    ap.add_argument("--ffn", type=int, default=None, help="feed-forward size override")
+    ap.add_argument("--vocab", type=int, default=None, help="vocabulary size override (needs matching data/)")
+    ap.add_argument("--ctx", type=int, default=None, help="context length override")
     ap.add_argument("--batch", type=int, default=None)
     ap.add_argument("--accum", type=int, default=None)
-    ap.add_argument("--lr", type=float, default=None)
+    ap.add_argument("--lr", type=float, default=None, help="peak learning rate of a fresh run")
+    ap.add_argument("--lr-cont", type=float, default=None, help="peak learning rate of a continued run")
+    ap.add_argument("--lr-min", type=float, default=None, help="final cosine learning rate")
+    ap.add_argument("--warmup", type=int, default=None, help="warmup steps before the cosine decay")
     ap.add_argument("--device", default="auto")
     ap.add_argument("--save-every", type=int, default=None)
     ap.add_argument("--milestone-every", type=int, default=None)
@@ -390,9 +422,14 @@ def main():
     ap.add_argument("--kd-weight", type=float, default=0.5)
     ap.add_argument("--kd-temp", type=float, default=2.0)
     args = ap.parse_args()
-    pretrain(args.steps, args.resume, args.init, args.size, args.batch, args.accum, args.lr,
-             args.save_every, args.milestone_every, args.device, args.teacher,
-             args.kd_weight, args.kd_temp)
+    pretrain(
+        args.steps, args.resume, args.init, args.size,
+        args.dim, args.layers, args.heads, args.ffn, args.vocab, args.ctx,
+        args.batch, args.accum,
+        args.lr, args.lr_cont, args.lr_min, args.warmup,
+        args.save_every, args.milestone_every, args.device, args.teacher,
+        args.kd_weight, args.kd_temp,
+    )
 
 
 if __name__ == "__main__":

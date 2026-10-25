@@ -203,7 +203,8 @@ def load_examples(tok, eos, ctx, with_system):
     return human + ai
 
 
-def sft(epochs=3, base=None, resume=False, device="auto", bs=None, accum=None):
+def sft(epochs=3, base=None, resume=False, device="auto", bs=None, accum=None,
+        lr_max=None, lr_min=None, warmup=None):
     dev = resolve_device(device)
     base = resolve_checkpoint(base)
     print(f"base: {base.name} | device: {dev}")
@@ -255,7 +256,12 @@ def sft(epochs=3, base=None, resume=False, device="auto", bs=None, accum=None):
     accum = dacc if accum is None else accum
     per_epoch = len(train) // (bs * accum)
     total = per_epoch * epochs
-    lr_max, lr_min, warmup = 2e-4, 2e-5, 50
+    if lr_max is None:
+        lr_max = 2e-4
+    if lr_min is None:
+        lr_min = 2e-5
+    if warmup is None:
+        warmup = 50
     opt = torch.optim.AdamW(model.parameters(), lr=lr_max, betas=(0.9, 0.95), weight_decay=0.01)
     amp = torch.autocast("cuda", dtype=torch.bfloat16) if dev == "cuda" else nullcontext()
 
@@ -344,8 +350,12 @@ def main():
     ap.add_argument("--device", default="auto")
     ap.add_argument("--bs", type=int, default=None)
     ap.add_argument("--accum", type=int, default=None)
+    ap.add_argument("--lr-max", type=float, default=None, help="peak learning rate of the SFT cosine")
+    ap.add_argument("--lr-min", type=float, default=None, help="final learning rate of the SFT cosine")
+    ap.add_argument("--warmup", type=int, default=None, help="warmup steps before the cosine decay")
     args = ap.parse_args()
-    sft(args.epochs, args.base, args.resume, args.device, args.bs, args.accum)
+    sft(args.epochs, args.base, args.resume, args.device, args.bs, args.accum,
+        args.lr_max, args.lr_min, args.warmup)
 
 
 if __name__ == "__main__":
