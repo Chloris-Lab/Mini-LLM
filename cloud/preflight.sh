@@ -4,16 +4,20 @@ cd "$(dirname "$0")/.."
 
 SIZE="${SIZE:-40M}"
 case "$SIZE" in
-  40M|150M) EXPECT_VOCAB=32768 ;;
-  *) EXPECT_VOCAB=16384 ;;
+  40M|150M) BASELINE_VOCAB=32768 ;;
+  *) BASELINE_VOCAB=16384 ;;
 esac
-TOK="models/$((EXPECT_VOCAB / 1024))k/tok.json"
+EXPECT_VOCAB="${VOCAB:-$BASELINE_VOCAB}"
+case "$SIZE" in
+  150M) TOK="models/digit32k/tok.json" ;;
+  *)    TOK="models/$((EXPECT_VOCAB / 1024))k/tok.json" ;;
+esac
 
 fail=0
 say() { echo "$1"; }
 warn() { echo "!! $1" >&2; fail=1; }
 
-say "SIZE=$SIZE EXPECT_VOCAB=$EXPECT_VOCAB"
+say "SIZE=$SIZE EXPECT_VOCAB=$EXPECT_VOCAB${VOCAB:+ (VOCAB override)}"
 
 if [ -f data/meta.json ]; then
   have=$(uv run python -c "import json; print(json.load(open('data/meta.json')).get('vocab'))")

@@ -2,17 +2,43 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-SIZE=150M
-STEPS=53375
-PREP_MILLIONS=7300
+SIZE=${SIZE:-150M}
+
+recipe_steps() {
+  case "$1" in 150M) echo 53375 ;; 40M) echo 35096 ;; 70M) echo 22000 ;; *) echo 3000 ;; esac
+}
+recipe_prep() {
+  case "$1" in 150M) echo 7300 ;; 40M) echo 4600 ;; 70M) echo 1500 ;; *) echo 100 ;; esac
+}
+recipe_lr_max() { case "$1" in 70M) echo 6e-4 ;; *) echo 5e-4 ;; esac; }
+recipe_lr_min() { case "$1" in 70M) echo 6e-5 ;; *) echo 5e-5 ;; esac; }
+recipe_warmup() { case "$1" in 70M) echo 500 ;; *) echo 1000 ;; esac; }
+recipe_dim()    { case "$1" in 70M) echo 640 ;; 150M) echo 768 ;; *) echo 512 ;; esac; }
+recipe_layers() { case "$1" in 70M) echo 12 ;; 150M) echo 18 ;; *) echo 8 ;; esac; }
+recipe_heads()  { case "$1" in 70M) echo 10 ;; 150M) echo 12 ;; *) echo 8 ;; esac; }
+recipe_ffn()    { case "$1" in 70M) echo 1728 ;; 150M) echo 2048 ;; *) echo 1408 ;; esac; }
+recipe_vocab()  { case "$1" in 40M|150M) echo 32768 ;; *) echo 16384 ;; esac; }
+recipe_ctx()    { case "$1" in 150M) echo 2048 ;; 40M) echo 1024 ;; *) echo 512 ;; esac; }
+STEPS=${STEPS:-$(recipe_steps "$SIZE")}
+PREP_MILLIONS=${PREP_MILLIONS:-$(recipe_prep "$SIZE")}
+LR_MAX=${LR_MAX:-$(recipe_lr_max "$SIZE")}
+LR_CONT=${LR_CONT:-3e-4}
+LR_MIN=${LR_MIN:-$(recipe_lr_min "$SIZE")}
+LR_WARMUP=${LR_WARMUP:-$(recipe_warmup "$SIZE")}
+DIM=${DIM:-$(recipe_dim "$SIZE")}
+LAYERS=${LAYERS:-$(recipe_layers "$SIZE")}
+HEADS=${HEADS:-$(recipe_heads "$SIZE")}
+FFN=${FFN:-$(recipe_ffn "$SIZE")}
+VOCAB=${VOCAB:-$(recipe_vocab "$SIZE")}
+CTX=${CTX:-$(recipe_ctx "$SIZE")}
+SFT_LR_MAX=${SFT_LR_MAX:-2e-4}
+SFT_LR_MIN=${SFT_LR_MIN:-2e-5}
+SFT_LR_WARMUP=${SFT_LR_WARMUP:-50}
 TEACHER=${TEACHER:-}
 KD_WEIGHT=${KD_WEIGHT:-0.5}
 KD_TEMP=${KD_TEMP:-2.0}
 
-case "$SIZE" in
-  40M|150M) EXPECT_VOCAB=32768 ;;
-  *) EXPECT_VOCAB=16384 ;;
-esac
+EXPECT_VOCAB=$VOCAB
 case "$SIZE" in
   150M) LINEAGE_DIR="digit32k" ;;
   *)    LINEAGE_DIR="$((EXPECT_VOCAB / 1024))k" ;;
@@ -76,7 +102,7 @@ prep)
     fi
   fi
   if [ "$EXPECT_VOCAB" = "32768" ]; then
-    vocab_args=(--vocab 32768 --tokenizer-docs 300000)
+    vocab_args=(--vocab "$EXPECT_VOCAB" --tokenizer-docs 300000)
   else
     vocab_args=()
   fi
@@ -87,7 +113,9 @@ prep)
   echo "prep started -> $LOGDIR/prep.log"
   ;;
 smoke)
-  args=(uv run pretrain 100 --size "$SIZE" --device cuda --save-every 50 --milestone-every 1000000)
+  args=(uv run pretrain 100 --size "$SIZE" --device cuda --save-every 50 --milestone-every 1000000
+        --dim "$DIM" --layers "$LAYERS" --heads "$HEADS" --ffn "$FFN" --vocab "$VOCAB" --ctx "$CTX"
+        --lr-max "$LR_MAX" --lr-cont "$LR_CONT" --lr-min "$LR_MIN" --warmup "$LR_WARMUP")
   if [ -n "$TEACHER" ]; then
     args+=(--teacher "$TEACHER" --kd-weight "$KD_WEIGHT" --kd-temp "$KD_TEMP")
   fi
@@ -96,7 +124,9 @@ smoke)
   echo "smoke done, note the tok/s above"
   ;;
 train)
-  args=(uv run pretrain "$STEPS" --size "$SIZE" --device cuda)
+  args=(uv run pretrain "$STEPS" --size "$SIZE" --device cuda
+        --dim "$DIM" --layers "$LAYERS" --heads "$HEADS" --ffn "$FFN" --vocab "$VOCAB" --ctx "$CTX"
+        --lr-max "$LR_MAX" --lr-cont "$LR_CONT" --lr-min "$LR_MIN" --warmup "$LR_WARMUP")
   if [ -n "$TEACHER" ]; then
     args+=(--teacher "$TEACHER" --kd-weight "$KD_WEIGHT" --kd-temp "$KD_TEMP")
   fi
@@ -107,16 +137,19 @@ train)
   echo "train started (${args[*]}) -> $LOGDIR/train.log"
   ;;
 sft)
-  setsid nohup uv run sft 2 "$BASE" --device cuda >"$LOGDIR/sft.log" 2>&1 < /dev/null &
-  echo "sft started (2 epochs on $BASE) -> $LOGDIR/sft.log"
+  setsid nohup uv run sft 2 "$BASE" --device cuda \
+    --lr-max "$SFT_LR_MAX" --lr-min "$SFT_LR_MIN" --warmup "$SFT_LR_WARMUP" \
+    >"$LOGDIR/sft.log" 2>&1 < /dev/null &
+  echo "sft started (2 epochs on $BASE, lr $SFT_LR_MAX -> $SFT_LR_MIN, warmup $SFT_LR_WARMUP) -> $LOGDIR/sft.log"
   ;;
 eval)
   EVAL_DIR="${MINI_EVAL_DIR:-../Mini-Eval}"
-  MODELS=(mini-llm-40M-35096steps mini-llm-150M-34332steps mini-llm-70M-22000steps
-          SmolLM2-135M pythia-160m-step143000 pythia-70m-step143000)
-  setsid nohup bash -c "cd '$EVAL_DIR' && uv run mini-eval check mini-llm-40M-35096steps --device cuda && uv run mini-eval run small_lm ${MODELS[*]} --device cuda --require-clean" \
+  default_models="mini-llm-40M-35096steps mini-llm-150M-34332steps mini-llm-70M-22000steps SmolLM2-135M pythia-160m-step143000 pythia-70m-step143000"
+  read -r -a MODELS <<< "${EVAL_MODELS:-$default_models}"
+  check_model="${EVAL_CHECK:-${MODELS[0]}}"
+  setsid nohup bash -c "cd '$EVAL_DIR' && uv run mini-eval check '$check_model' --device cuda && uv run mini-eval run small_lm ${MODELS[*]} --device cuda --require-clean" \
     >"$LOGDIR/eval.log" 2>&1 < /dev/null &
-  echo "eval started (${#MODELS[@]} models, protocol v2) -> $LOGDIR/eval.log"
+  echo "eval started (check $check_model, then ${#MODELS[@]} models, protocol v2) -> $LOGDIR/eval.log"
   ;;
 status)
   nvidia-smi || true
