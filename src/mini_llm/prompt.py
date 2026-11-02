@@ -1,3 +1,5 @@
+from datetime import date
+
 DEFAULT_SYSTEM_PROMPT = (
     "You are Mini, a small AI assistant. Answer briefly and directly. "
     "When a list helps, write it as a short markdown list. "
@@ -5,6 +7,10 @@ DEFAULT_SYSTEM_PROMPT = (
 )
 
 DATE_LEAD = "Today is {date}.\n\n"
+
+
+def current_date():
+    return date.today().isoformat()
 
 
 def build_system_prompt(system=None, date=None):

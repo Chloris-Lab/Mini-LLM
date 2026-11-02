@@ -56,6 +56,14 @@ def test_save_reload_round_trip(tmp_path):
     assert (a - b).abs().max().item() < 1e-5
 
 
+def test_system_template_uses_the_iso_date():
+    from mini_llm.export import system_chat_template
+
+    template = system_chat_template()
+    assert "strftime_now('%Y-%m-%d')" in template
+    assert "Today is " in template
+
+
 def test_labels_match_native_loss():
     torch.manual_seed(2)
     cfg = tiny_cfg()

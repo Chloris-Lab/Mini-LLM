@@ -1,11 +1,10 @@
 import sys
-from datetime import date
 
 import torch
 
 from mini_llm.checkpoints import load_model, load_tokenizer, resolve_checkpoint
 from mini_llm.config import get_device
-from mini_llm.prompt import DEFAULT_SYSTEM_PROMPT, build_system_prompt, format_history
+from mini_llm.prompt import DEFAULT_SYSTEM_PROMPT, build_system_prompt, current_date, format_history
 
 TEMPERATURE = 0.5
 TOP_K = 40
@@ -17,7 +16,7 @@ HISTORY_TURNS = 2
 def default_system(lineage):
     if lineage != "digit32k":
         return None
-    return build_system_prompt(DEFAULT_SYSTEM_PROMPT, date=date.today().isoformat())
+    return build_system_prompt(DEFAULT_SYSTEM_PROMPT, date=current_date())
 
 
 def reply(model, tok, eos, dev, question, history=(), ctx=None, system=None):

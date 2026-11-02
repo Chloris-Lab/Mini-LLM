@@ -1,6 +1,37 @@
-from mini_llm.prompt import DEFAULT_SYSTEM_PROMPT
+import random
+from datetime import date
+
+from mini_llm.prompt import DEFAULT_SYSTEM_PROMPT, build_system_prompt
 
 MATH_SYSTEM_PROMPT = "Solve the problem step by step. End with the numeric answer."
+
+DATE_QUESTIONS = [
+    "What is today's date?",
+    "What's the date today?",
+    "What day is it today?",
+    "What is the current date?",
+    "Do you know today's date?",
+    "Tell me today's date.",
+    "what is the date?",
+    "What date is it?",
+]
+DATE_START = date(2024, 1, 1).toordinal()
+DATE_END = date(2027, 12, 31).toordinal()
+
+
+def sample_date(rng):
+    return date.fromordinal(rng.randint(DATE_START, DATE_END)).isoformat()
+
+
+def date_pairs(count, seed=3):
+    rng = random.Random(seed)
+    pairs = []
+    for _ in range(count):
+        day = sample_date(rng)
+        system = build_system_prompt(DEFAULT_SYSTEM_PROMPT, date=day)
+        pairs.append((system, rng.choice(DATE_QUESTIONS), f"Today is {day}."))
+    return pairs
+
 
 VARIATIONS = [
     (

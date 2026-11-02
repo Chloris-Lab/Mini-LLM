@@ -10,8 +10,8 @@ of the architecture page.
 Training runs on NVIDIA GPUs (CUDA).
 
 The 150M **1.1** (`models/digit32k/`) is the current cloud recipe: digit-split
-tokenizer, 2048-token context, system-prompt format, hybrid math / markdown /
-multi-turn SFT, ~7B-token pretraining budget — see
+tokenizer, 2048-token context, system-prompt format, arithmetic / date following /
+markdown / multi-turn SFT, ~7B-token pretraining budget — see
 [training](https://github.com/Mini-llm-lab/Documentation/blob/main/Mini-LLM/training.md) and
 [cloud GPU](https://github.com/Mini-llm-lab/Documentation/blob/main/Mini-LLM/cloud-gpu.md).
 

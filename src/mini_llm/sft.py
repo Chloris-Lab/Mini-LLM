@@ -19,8 +19,13 @@ from mini_llm.checkpoints import (
 from mini_llm.config import resolve_device, size_millions
 from mini_llm import math_data
 from mini_llm.identity import arithmetic_pairs, identity_pairs
-from mini_llm.prompt import format_prompt
-from mini_llm.system_prompts import DEFAULT_SYSTEM_PROMPT, MATH_SYSTEM_PROMPT, variation_pairs
+from mini_llm.prompt import DEFAULT_SYSTEM_PROMPT, build_system_prompt, format_prompt
+from mini_llm.system_prompts import (
+    MATH_SYSTEM_PROMPT,
+    date_pairs,
+    sample_date,
+    variation_pairs,
+)
 
 VAL_SIZE = 500
 AI_MAX_SHARE = 0.25
@@ -28,6 +33,8 @@ IDENTITY_REPEAT = 5
 VARIATION_REPEAT = 5
 MATH_COUNT = 75_000
 SKILL_COUNT = 10_000
+DATE_COUNT = 400
+DATE_SHARE = 0.9
 GSM8K_MAX = 4000
 IDENTITY_LEAK = re.compile(
     r"open ?assistant|\blaion\b|chat ?gpt|openai"
@@ -35,6 +42,19 @@ IDENTITY_LEAK = re.compile(
     r"|i('m| am) (an? )?(ai|artificial intelligence|language model|large language model|virtual assistant)",
     re.IGNORECASE,
 )
+
+
+def prompt_builder(with_system, seed):
+    rng = random.Random(seed)
+
+    def build(base=DEFAULT_SYSTEM_PROMPT):
+        if not with_system:
+            return None
+        if rng.random() >= DATE_SHARE:
+            return base
+        return build_system_prompt(base, date=sample_date(rng))
+
+    return build
 
 
 def dolly_pairs():
@@ -176,6 +196,7 @@ def encode(name, items, tok, eos, ctx, clean=True):
 
 def load_examples(tok, eos, ctx, with_system):
     human, ai = [], []
+    build = prompt_builder(with_system, 7)
     dolly_plain, dolly_context = dolly_pairs()
     no_robots, no_robots_multi = no_robots_pairs()
     oasst, oasst_multi = oasst_pairs()
@@ -183,19 +204,23 @@ def load_examples(tok, eos, ctx, with_system):
     if with_system:
         sources["dolly with context"] = dolly_context
     for name, fn in sources.items():
-        human += encode(name, [pair_segments(DEFAULT_SYSTEM_PROMPT if with_system else None, q, a) for q, a in fn], tok, eos, ctx)
+        human += encode(name, [pair_segments(build(), q, a) for q, a in fn], tok, eos, ctx)
     if with_system:
-        human += encode("gsm8k", [pair_segments(MATH_SYSTEM_PROMPT, q, a) for q, a in gsm8k_pairs()], tok, eos, ctx)
+        human += encode(
+            "gsm8k",
+            [pair_segments(build(MATH_SYSTEM_PROMPT), q, a) for q, a in gsm8k_pairs()],
+            tok, eos, ctx,
+        )
     for name, conversations in (("no_robots multi-turn", no_robots_multi), ("oasst2 multi-turn", oasst_multi)):
         if not with_system:
             continue
         human += encode(
             name,
-            [conversation_segments(DEFAULT_SYSTEM_PROMPT, [tuple(t) for t in c]) for c in conversations],
+            [conversation_segments(build(), [tuple(t) for t in c]) for c in conversations],
             tok, eos, ctx, clean=False,
         )
     for name, fn in {"alpaca": alpaca_pairs}.items():
-        ai += encode(name, [pair_segments(DEFAULT_SYSTEM_PROMPT if with_system else None, q, a) for q, a in fn()], tok, eos, ctx)
+        ai += encode(name, [pair_segments(build(), q, a) for q, a in fn()], tok, eos, ctx)
     cap = int(len(human) * AI_MAX_SHARE / (1 - AI_MAX_SHARE))
     random.Random(0).shuffle(ai)
     ai = ai[:cap]
@@ -219,9 +244,13 @@ def sft(epochs=3, base=None, resume=False, device="auto", bs=None, accum=None,
     random.Random(0).shuffle(data)
     val, train = data[:VAL_SIZE], data[VAL_SIZE:]
 
+    build = prompt_builder(with_system, 8)
     extra_ident = identity_pairs(size_millions(n_params), repeat=IDENTITY_REPEAT) + arithmetic_pairs()
-    ident_system = DEFAULT_SYSTEM_PROMPT if with_system else None
-    train += encode("identity and arithmetic", [pair_segments(ident_system, q, a) for q, a in extra_ident], tok, eos, cfg.ctx, clean=False)
+    train += encode(
+        "identity and arithmetic",
+        [pair_segments(build(), q, a) for q, a in extra_ident],
+        tok, eos, cfg.ctx, clean=False,
+    )
     if with_system:
         train += encode(
             "variations",
@@ -229,13 +258,18 @@ def sft(epochs=3, base=None, resume=False, device="auto", bs=None, accum=None,
             tok, eos, cfg.ctx, clean=False,
         )
         train += encode(
+            "dates",
+            [pair_segments(system, q, a) for system, q, a in date_pairs(DATE_COUNT)],
+            tok, eos, cfg.ctx, clean=False,
+        )
+        train += encode(
             "math",
-            [pair_segments(DEFAULT_SYSTEM_PROMPT, q, a) for q, a in math_data.synthetic_pairs(MATH_COUNT)],
+            [pair_segments(build(), q, a) for q, a in math_data.synthetic_pairs(MATH_COUNT)],
             tok, eos, cfg.ctx, clean=False,
         )
         train += encode(
             "skills",
-            [pair_segments(DEFAULT_SYSTEM_PROMPT, q, a) for q, a in math_data.skill_pairs(SKILL_COUNT)],
+            [pair_segments(build(), q, a) for q, a in math_data.skill_pairs(SKILL_COUNT)],
             tok, eos, cfg.ctx, clean=False,
         )
     print(f"{len(train)} train examples, {len(val)} validation examples")

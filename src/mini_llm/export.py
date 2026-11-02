@@ -20,7 +20,7 @@ CHAT_TEMPLATE = (
 
 def system_chat_template():
     header = (
-        "System: Today is {{ strftime_now('%b %d, %Y') }}.\n"
+        "System: Today is {{ strftime_now('%Y-%m-%d') }}.\n"
         + DEFAULT_SYSTEM_PROMPT.strip()
         + "\n"
     )

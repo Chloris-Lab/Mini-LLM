@@ -1,3 +1,5 @@
+import re
+
 from mini_llm.prompt import DEFAULT_SYSTEM_PROMPT, build_system_prompt, format_history, format_prompt
 
 
@@ -11,8 +13,48 @@ def test_format_prompt_with_system():
 
 
 def test_build_system_prompt():
-    assert build_system_prompt(DEFAULT_SYSTEM_PROMPT, date="Oct 23, 2026").startswith("Today is Oct 23, 2026.")
+    assert build_system_prompt(DEFAULT_SYSTEM_PROMPT, date="2026-10-23").startswith("Today is 2026-10-23.")
     assert build_system_prompt(" S ", date=None) == "S"
+
+
+def test_current_date_reads_the_clock_on_every_call(monkeypatch):
+    from mini_llm import prompt
+
+    days = iter(["2026-11-02", "2026-11-03"])
+
+    class Day:
+        def isoformat(self):
+            return next(days)
+
+    class Clock:
+        @staticmethod
+        def today():
+            return Day()
+
+    monkeypatch.setattr(prompt, "date", Clock)
+    assert prompt.current_date() == "2026-11-02"
+    assert prompt.current_date() == "2026-11-03"
+
+
+def test_date_pairs_answer_the_system_date():
+    from mini_llm.system_prompts import date_pairs
+
+    pairs = date_pairs(60)
+    days = set()
+    for system, question, answer in pairs:
+        day = answer[len("Today is ") : -1]
+        assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", day), answer
+        assert answer == f"Today is {day}."
+        assert system.startswith(f"Today is {day}.")
+        days.add(day)
+    assert len(days) > 30
+
+
+def test_date_pairs_are_deterministic():
+    from mini_llm.system_prompts import date_pairs
+
+    assert date_pairs(20) == date_pairs(20)
+    assert date_pairs(20) != date_pairs(20, seed=4)
 
 
 def test_format_history():
