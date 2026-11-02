@@ -26,7 +26,7 @@ VAL_SIZE = 500
 AI_MAX_SHARE = 0.25
 IDENTITY_REPEAT = 5
 VARIATION_REPEAT = 5
-MATH_COUNT = 150_000
+MATH_COUNT = 75_000
 SKILL_COUNT = 10_000
 GSM8K_MAX = 4000
 IDENTITY_LEAK = re.compile(
@@ -221,22 +221,22 @@ def sft(epochs=3, base=None, resume=False, device="auto", bs=None, accum=None,
 
     extra_ident = identity_pairs(size_millions(n_params), repeat=IDENTITY_REPEAT) + arithmetic_pairs()
     ident_system = DEFAULT_SYSTEM_PROMPT if with_system else None
-    train += encode("identity and arithmetic", [pair_segments(ident_system, q, a) for q, a in extra_ident], tok, eos, ctx, clean=False)
+    train += encode("identity and arithmetic", [pair_segments(ident_system, q, a) for q, a in extra_ident], tok, eos, cfg.ctx, clean=False)
     if with_system:
         train += encode(
             "variations",
             [pair_segments(system, q, a) for system, q, a in variation_pairs(VARIATION_REPEAT)],
-            tok, eos, ctx, clean=False,
+            tok, eos, cfg.ctx, clean=False,
         )
         train += encode(
             "math",
             [pair_segments(DEFAULT_SYSTEM_PROMPT, q, a) for q, a in math_data.synthetic_pairs(MATH_COUNT)],
-            tok, eos, ctx, clean=False,
+            tok, eos, cfg.ctx, clean=False,
         )
         train += encode(
             "skills",
             [pair_segments(DEFAULT_SYSTEM_PROMPT, q, a) for q, a in math_data.skill_pairs(SKILL_COUNT)],
-            tok, eos, ctx, clean=False,
+            tok, eos, cfg.ctx, clean=False,
         )
     print(f"{len(train)} train examples, {len(val)} validation examples")
 
