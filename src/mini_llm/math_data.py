@@ -13,8 +13,15 @@ WORDS = [
     "ocean", "music", "dream", "horse", "stone", "light", "chair", "fruit", "quiet", "shore",
 ]
 
-WIDTH_WEIGHTS = {1: 40, 2: 25, 3: 15, 4: 12, 5: 8}
-MUL_WIDTH_WEIGHTS = {2: 35, 3: 30, 4: 25, 5: 10}
+OP_WEIGHTS = {"add": 4, "sub": 4, "mul": 3, "div": 3}
+ADD_SUB_WIDTH_WEIGHTS = {1: 25, 2: 25, 3: 18, 4: 14, 5: 10, 6: 8}
+MUL_WIDTH_WEIGHTS = {(2, 1): 22, (2, 2): 20, (3, 1): 18, (3, 2): 16, (4, 1): 10, (4, 2): 8, (5, 1): 6}
+DIV_QUOTIENT_WEIGHTS = {2: 40, 3: 35, 4: 25}
+NEGATIVE_SHARE = 0.1
+CARRY_SHARE = 0.3
+SPLIT_SHARE = 0.5
+
+SIGNS = {"add": "+", "sub": "-", "mul": "x", "div": "/"}
 
 
 def number(rng, digits):
@@ -22,59 +29,81 @@ def number(rng, digits):
     return rng.randint(low, 10 ** digits - 1)
 
 
-def choose_width(rng, weights):
-    total = sum(weights.values())
-    r = rng.randint(1, total)
-    for width in sorted(weights):
-        r -= weights[width]
+def choose_weighted(rng, weights):
+    keys = sorted(weights)
+    r = rng.randint(1, sum(weights.values()))
+    for key in keys:
+        r -= weights[key]
         if r <= 0:
-            return width
-    return max(weights)
+            return key
+    return keys[-1]
 
 
 def template(rng, base):
     return rng.choice([base[0], base[2], base[1], base[3], base[4]])
 
 
-def fmt_answer(kind, a, b, result):
-    sign = {"add": "+", "sub": "-", "mul": "x", "div": "/"}[kind]
-    return f"{a} {sign} {b} = {result}."
+def plain_answer(kind, a, b, result):
+    return f"{a} {SIGNS[kind]} {b} = {result}."
 
 
 def carried_answer(kind, a, b, result):
-    if kind == "add":
-        step = (b // 100) * 100
-        if step <= 0 or step >= b:
-            return fmt_answer(kind, a, b, result)
-        mid = a + step
-        return f"{a} + {b} = {a} + {step} = {mid}, then {mid} + {b - step} = {result}."
     step = (b // 100) * 100
     if step <= 0 or step >= b:
-        return fmt_answer(kind, a, b, result)
-    mid = a - step
-    return f"{a} - {b} = {a} - {step} = {mid}, then {mid} - {b - step} = {result}."
+        return plain_answer(kind, a, b, result)
+    sign = SIGNS[kind]
+    mid = a + step if kind == "add" else a - step
+    return f"{a} {sign} {b} = {a} {sign} {step} = {mid}, then {mid} {sign} {b - step} = {result}."
+
+
+def split_answer(a, b):
+    tens, ones = divmod(b, 10)
+    if ones == 0:
+        return plain_answer("mul", a, b, a * b)
+    high = a * tens * 10
+    low = a * ones
+    return f"{a} x {b} = {a} x {tens * 10} + {a} x {ones} = {high} + {low} = {a * b}."
+
+
+def add_sub_pair(rng, kind):
+    width = choose_weighted(rng, ADD_SUB_WIDTH_WEIGHTS)
+    a, b = number(rng, width), number(rng, width)
+    negative = kind == "sub" and rng.random() < NEGATIVE_SHARE
+    if not negative and b > a:
+        a, b = b, a
+    result = a + b if kind == "add" else a - b
+    if width >= 4 and rng.random() < CARRY_SHARE:
+        answer = carried_answer(kind, a, b, result)
+    else:
+        answer = plain_answer(kind, a, b, result)
+    return template(rng, ADD if kind == "add" else SUB).format(a=a, b=b), answer
+
+
+def mul_pair(rng):
+    a_width, b_width = choose_weighted(rng, MUL_WIDTH_WEIGHTS)
+    a = number(rng, a_width)
+    b = rng.randint(1, 9) if b_width == 1 else number(rng, b_width)
+    if b >= 10 and rng.random() < SPLIT_SHARE:
+        answer = split_answer(a, b)
+    else:
+        answer = plain_answer("mul", a, b, a * b)
+    return template(rng, MUL).format(a=a, b=b), answer
+
+
+def div_pair(rng):
+    quotient = number(rng, choose_weighted(rng, DIV_QUOTIENT_WEIGHTS))
+    divisor = rng.randint(2, 99)
+    a = divisor * quotient
+    return template(rng, DIV).format(a=a, b=divisor), plain_answer("div", a, divisor, quotient)
 
 
 def op_pair(rng):
-    kind = rng.choices(("add", "sub", "mul"), weights=(5, 4, 2))[0]
-    if kind in ("add", "sub"):
-        width = choose_width(rng, WIDTH_WEIGHTS)
-        a, b = number(rng, width), number(rng, width)
-        if b > a:
-            a, b = b, a
-        result = a + b if kind == "add" else a - b
-        answer = carried_answer(kind, a, b, result) if width >= 4 and rng.random() < 0.3 else fmt_answer(kind, a, b, result)
-        return template(rng, ADD if kind == "add" else SUB).format(a=a, b=b), answer
-    width = choose_width(rng, MUL_WIDTH_WEIGHTS)
-    if width == 2:
-        a, b = number(rng, 2), number(rng, 2)
-    elif width == 3:
-        a, b = number(rng, 3), rng.randint(1, 9)
-    elif width == 4:
-        a, b = number(rng, 4), rng.randint(1, 9)
-    else:
-        a, b = number(rng, 5), rng.randint(1, 9)
-    return template(rng, MUL).format(a=a, b=b), fmt_answer("mul", a, b, a * b)
+    kind = choose_weighted(rng, OP_WEIGHTS)
+    if kind == "add" or kind == "sub":
+        return add_sub_pair(rng, kind)
+    if kind == "mul":
+        return mul_pair(rng)
+    return div_pair(rng)
 
 
 def table_pairs(seed=0):
@@ -82,21 +111,22 @@ def table_pairs(seed=0):
     pairs = []
     for a in range(1, TABLE_MAX + 1):
         for b in range(1, TABLE_MAX + 1):
-            pairs.append((template(rng, MUL).format(a=a, b=b), fmt_answer("mul", a, b, a * b)))
+            pairs.append((template(rng, MUL).format(a=a, b=b), plain_answer("mul", a, b, a * b)))
     for p in range(2, TABLE_MAX + 1):
         for q in range(1, TABLE_MAX + 1):
-            pairs.append((template(rng, DIV).format(a=p * q, b=p), f"{p * q} / {p} = {q}."))
+            pairs.append((template(rng, DIV).format(a=p * q, b=p), plain_answer("div", p * q, p, q)))
     return pairs
 
 
-def synthetic_pairs(count, seed=1, table_share=0.35):
+def synthetic_pairs(count, seed=1, table_share=0.1):
     rng = random.Random(seed + 1)
-    n_tables = int(count * table_share) // len(table_pairs(seed)) + 1
-    pool = list(table_pairs(seed)) * n_tables
-    ops = [op_pair(rng) for _ in range(count - min(count, int(count * table_share)))]
-    pool = pool[: max(0, count - len(ops))] + ops
+    tables = table_pairs(seed)
+    n_tables = min(count, int(count * table_share))
+    start = rng.randrange(len(tables))
+    pool = [tables[(start + i) % len(tables)] for i in range(n_tables)]
+    pool += [op_pair(rng) for _ in range(count - n_tables)]
     rng.shuffle(pool)
-    return pool[:count]
+    return pool
 
 
 def count_pair(rng):
