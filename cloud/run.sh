@@ -144,7 +144,7 @@ sft)
   ;;
 eval)
   EVAL_DIR="${MINI_EVAL_DIR:-../Mini-Eval}"
-  default_models="mini-llm-40M-35096steps mini-llm-150M-34332steps mini-llm-70M-22000steps SmolLM2-135M pythia-160m-step143000 pythia-70m-step143000"
+  default_models="mini-llm-40M-35096steps mini-llm-150M-34332steps mini-llm-70M-22000steps SmolLM2-135M gemma-3-270m pythia-160m-step143000 pythia-70m-step143000"
   read -r -a MODELS <<< "${EVAL_MODELS:-$default_models}"
   check_model="${EVAL_CHECK:-${MODELS[0]}}"
   setsid nohup bash -c "cd '$EVAL_DIR' && uv run mini-eval check '$check_model' --device cuda && uv run mini-eval run small_lm ${MODELS[*]} --device cuda --require-clean" \
