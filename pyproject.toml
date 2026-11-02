@@ -24,6 +24,7 @@ teacher = "mini_llm.teacher:main"
 sft = "mini_llm.sft:main"
 chat = "mini_llm.chat:main"
 export = "mini_llm.export:main"
+heldout = "mini_llm.heldout:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -8,6 +8,7 @@ MODULES = [
     "mini_llm.config",
     "mini_llm.configuration_mini_llm",
     "mini_llm.export",
+    "mini_llm.heldout",
     "mini_llm.identity",
     "mini_llm.math_data",
     "mini_llm.model",
