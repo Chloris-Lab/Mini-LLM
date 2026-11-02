@@ -57,6 +57,23 @@ def test_date_pairs_are_deterministic():
     assert date_pairs(20) != date_pairs(20, seed=4)
 
 
+def test_prompt_builder_mixes_persona_paraphrases():
+    from mini_llm.sft import prompt_builder
+    from mini_llm.system_prompts import SYSTEM_PARAPHRASES
+
+    build = prompt_builder(True, 5)
+    systems = [build() for _ in range(4000)]
+    canonical = sum("Answer briefly and directly." in s for s in systems)
+    paraphrased = sum(any(p in s for p in SYSTEM_PARAPHRASES) for s in systems)
+    dated = sum(s.startswith("Today is ") for s in systems)
+    assert 0.78 < canonical / 4000 < 0.90
+    assert 0.10 < paraphrased / 4000 < 0.20
+    assert 0.85 < dated / 4000 < 0.95
+    assert all("markdown list" in s for s in systems)
+    assert prompt_builder(True, 5)() == systems[0]
+    assert prompt_builder(False, 5)() is None
+
+
 def test_format_history():
     h = format_history("S", [("q1", "a1"), ("q2", None)])
     assert h == "System: S\nUser: q1\nAssistant: a1\nUser: q2\nAssistant:"

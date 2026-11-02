@@ -22,6 +22,7 @@ from mini_llm.identity import arithmetic_pairs, identity_pairs
 from mini_llm.prompt import DEFAULT_SYSTEM_PROMPT, build_system_prompt, format_prompt
 from mini_llm.system_prompts import (
     MATH_SYSTEM_PROMPT,
+    SYSTEM_PARAPHRASES,
     date_pairs,
     sample_date,
     variation_pairs,
@@ -35,6 +36,7 @@ MATH_COUNT = 75_000
 SKILL_COUNT = 10_000
 DATE_COUNT = 400
 DATE_SHARE = 0.9
+PARAPHRASE_SHARE = 0.15
 GSM8K_MAX = 4000
 IDENTITY_LEAK = re.compile(
     r"open ?assistant|\blaion\b|chat ?gpt|openai"
@@ -50,6 +52,8 @@ def prompt_builder(with_system, seed):
     def build(base=DEFAULT_SYSTEM_PROMPT):
         if not with_system:
             return None
+        if base is DEFAULT_SYSTEM_PROMPT and rng.random() < PARAPHRASE_SHARE:
+            base = rng.choice(SYSTEM_PARAPHRASES)
         if rng.random() >= DATE_SHARE:
             return base
         return build_system_prompt(base, date=sample_date(rng))
