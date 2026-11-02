@@ -93,6 +93,7 @@ def identity_pairs(params_m, repeat=3, seed=0):
 ADD = ["What is {a} + {b}?", "what is {a} + {b}", "what's {a}+{b}", "{a} + {b}", "How much is {a} plus {b}?"]
 SUB = ["What is {a} - {b}?", "what is {a} - {b}", "what's {a}-{b}", "{a} - {b}", "How much is {a} minus {b}?"]
 MUL = ["What is {a} * {b}?", "what is {a} x {b}", "what's {a}x{b}", "{a} x {b}", "How much is {a} times {b}?"]
+DIV = ["What is {a} / {b}?", "what is {a} / {b}", "what's {a}/{b}", "{a} / {b}", "How much is {a} divided by {b}?"]
 
 
 def pick(templates, rng):
@@ -114,4 +115,8 @@ def arithmetic_pairs(seed=0):
         for b in range(1, 11):
             for t in pick(MUL, rng):
                 pairs.append((t.format(a=a, b=b), f"{a} x {b} = {a * b}."))
+    for a in range(1, 11):
+        for b in range(1, 11):
+            for t in pick(DIV, rng):
+                pairs.append((t.format(a=a * b, b=b), f"{a * b} / {b} = {a}."))
     return pairs
