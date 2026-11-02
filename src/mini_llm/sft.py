@@ -29,6 +29,7 @@ from mini_llm.system_prompts import (
 )
 
 VAL_SIZE = 500
+MAX_TURNS = 4
 AI_MAX_SHARE = 0.25
 IDENTITY_REPEAT = 5
 VARIATION_REPEAT = 5
@@ -78,20 +79,17 @@ def no_robots_pairs():
     pairs, conversations = [], []
     for d in ds[split]:
         msgs = [m for m in d["messages"] if m["role"] != "system"]
-        if len(msgs) >= 2 and msgs[0]["role"] == "user" and msgs[1]["role"] == "assistant":
-            if (
-                len(msgs) >= 4
-                and msgs[2]["role"] == "user"
-                and msgs[3]["role"] == "assistant"
-                and msgs[3]["content"].strip()
-            ):
-                conversations.append(
-                    [
-                        [msgs[0]["content"], msgs[1]["content"]],
-                        [msgs[2]["content"], msgs[3]["content"]],
-                    ]
-                )
-            pairs.append((msgs[0]["content"], msgs[1]["content"]))
+        turns = []
+        for i in range(0, len(msgs) - 1, 2):
+            question, answer = msgs[i], msgs[i + 1]
+            if question["role"] != "user" or answer["role"] != "assistant" or not answer["content"].strip():
+                break
+            turns.append([question["content"], answer["content"]])
+        if not turns:
+            continue
+        pairs.append(turns[0])
+        if len(turns) >= 2:
+            conversations.append(turns[:MAX_TURNS])
     return pairs, conversations
 
 
@@ -106,24 +104,28 @@ def oasst_pairs():
         replies = [c for c in by_parent.get(parent_id, []) if c["role"] == "assistant"]
         return min(replies, key=lambda r: r["rank"] if r["rank"] is not None else 999) if replies else None
 
+    def chain(start):
+        turns, node = [], start
+        while node is not None and len(turns) < MAX_TURNS:
+            reply = top_reply(node["message_id"])
+            if reply is None or reply["rank"] != 0 or not reply["text"].strip() or not node["text"].strip():
+                break
+            turns.append([node["text"], reply["text"]])
+            followups = [
+                c for c in by_parent.get(reply["message_id"], [])
+                if c["role"] == "prompter" and c["text"].strip()
+            ]
+            node = min(followups, key=lambda c: (len(c["text"]), c["message_id"])) if followups else None
+        return turns
+
     pairs, conversations = [], []
     for prompter in [d for d in ds if d["role"] == "prompter" and d["parent_id"] is None]:
-        a1 = top_reply(prompter["message_id"])
-        if a1 is None or a1["rank"] != 0 or not a1["text"].strip():
+        turns = chain(prompter)
+        if not turns:
             continue
-        followups = [c for c in by_parent.get(a1["message_id"], []) if c["role"] == "prompter"]
-        if followups:
-            u2 = min(followups, key=lambda c: (len(c["text"]), c["message_id"]))
-            a2 = top_reply(u2["message_id"])
-            if a2 is not None and a2["rank"] == 0 and u2["text"].strip() and a2["text"].strip():
-                conversations.append(
-                    [
-                        [prompter["text"], a1["text"]],
-                        [u2["text"], a2["text"]],
-                    ]
-                )
-                continue
-        pairs.append((prompter["text"], a1["text"]))
+        pairs.append(turns[0])
+        if len(turns) >= 2:
+            conversations.append(turns)
     return pairs, conversations
 
 
