@@ -72,7 +72,7 @@ def test_data_vocab_guard(tmp_path):
         check_data_matches(meta, cfg, tok)
 
     meta.write_text(json.dumps({"vocab": 32768, "tokenizer_sha256": h}))
-    check_data_matches(meta, cfg, tok)
+    assert check_data_matches(meta, cfg, tok)["vocab"] == 32768
 
     meta.write_text(json.dumps({"vocab": 32768, "tokenizer_sha256": h, "train_tokens": 99, "val_tokens": 2}))
     with pytest.raises(SystemExit):

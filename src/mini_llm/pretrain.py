@@ -1,4 +1,5 @@
 import argparse
+import json
 import math
 import sys
 import time
@@ -87,13 +88,11 @@ def default_batch(dev, size="34M", ctx=512):
 
 
 def check_data_matches(meta_path, cfg, tok_path=None, train_len=None, val_len=None):
-    import json
-
     if tok_path is None:
         tok_path = tokenizer_path(cfg.vocab, getattr(cfg, "lineage", ""))
     if not meta_path.exists():
         print("warning: no data/meta.json (data predates vocab tracking)")
-        return
+        return {}
     meta = json.loads(meta_path.read_text())
     if meta.get("vocab") != cfg.vocab:
         raise SystemExit(
@@ -121,6 +120,7 @@ def check_data_matches(meta_path, cfg, tok_path=None, train_len=None, val_len=No
                 f"data/{name}.bin has {actual_len} tokens but data/meta.json records {expected}. "
                 "The .bin files do not belong to this meta.json: regenerate data/ with prep."
             )
+    return meta
 
 
 def check_ids_fit(train, val, cfg):
@@ -183,8 +183,17 @@ def pretrain(steps=5000, resume=False, init=None, size="40M", dim=None, layers=N
         for s in ("train", "val")
     }
     train, val = data["train"], data["val"]
-    check_data_matches(DATA_DIR / "meta.json", cfg, train_len=len(train), val_len=len(val))
+    meta = check_data_matches(DATA_DIR / "meta.json", cfg, train_len=len(train), val_len=len(val))
     check_ids_fit(train, val, cfg)
+    bytes_per_token = None
+    if meta.get("train_bytes") and meta.get("train_tokens"):
+        bytes_per_token = meta["train_bytes"] / meta["train_tokens"]
+
+    def bits_per_byte(loss):
+        if not bytes_per_token:
+            return None
+        return loss / (math.log(2) * bytes_per_token)
+
     n_win = (len(train) - 1) // cfg.ctx
     if n_win <= 0:
         sys.exit(f"train.bin too small ({len(train)} tokens) for ctx {cfg.ctx}")
@@ -263,6 +272,13 @@ def pretrain(steps=5000, resume=False, init=None, size="40M", dim=None, layers=N
     print(f"batch {batch}x{accum} | {toks_step} tokens/step")
     print(f"steps {steps} | total {total_toks / 1e9:.2f}B tokens | {total_toks / n_params:.1f} tokens/param")
     print(f"train {len(train) / 1e6:.1f}M tokens | {total_toks / max(1, len(train)):.1f} passes")
+    if meta.get("sources") and meta.get("train_tokens"):
+        for src in meta["sources"]:
+            share = src["tokens"] / meta["train_tokens"]
+            passes = total_toks * share / max(1, src["tokens"])
+            print(f"  {src['name']} {share:5.1%} of tokens | {passes:.2f} passes")
+    if bytes_per_token:
+        print(f"  {bytes_per_token:.2f} bytes/token | val bits/byte reported with every val loss")
     if total_toks > 1.1 * len(train):
         print(f"warning: total tokens exceed 1.1x train.bin size ({len(train) / 1e6:.1f}M)")
     print(f"lr: peak {lr_peak:g} | cont {lr_cont:g} | min {lr_min:g} | warmup {warmup}")
@@ -373,10 +389,15 @@ def pretrain(steps=5000, resume=False, init=None, size="40M", dim=None, layers=N
         done = step + 1
         if done % save_every == 0 or done == steps:
             val_loss = evaluate()
-            print(f"  >> val loss {val_loss:.3f}", flush=True)
+            bpb = bits_per_byte(val_loss)
+            print(
+                f"  >> val loss {val_loss:.3f}"
+                + (f" | bits/byte {bpb:.3f}" if bpb else ""),
+                flush=True,
+            )
             save_checkpoint(
                 state_path, model, cfg,
-                kind="base", step=done, total_steps=steps, val_loss=val_loss,
+                kind="base", step=done, total_steps=steps, val_loss=val_loss, bits_per_byte=bpb,
                 phase_start=phase_start, optimizer=opt.state_dict(), kd=kd,
             )
         if done % milestone_every == 0 and done != steps:
@@ -390,8 +411,9 @@ def pretrain(steps=5000, resume=False, init=None, size="40M", dim=None, layers=N
 
     save_checkpoint(
         weights_path, model, cfg,
-        kind="base", step=steps, total_steps=steps, val_loss=val_loss, phase_start=phase_start,
-        kd=kd,
+        kind="base", step=steps, total_steps=steps, val_loss=val_loss,
+        bits_per_byte=bits_per_byte(val_loss) if val_loss is not None else None,
+        phase_start=phase_start, kd=kd,
     )
     state_path.unlink(missing_ok=True)
     print(f"done -> {weights_path.name}")
