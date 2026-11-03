@@ -27,11 +27,12 @@ def rank(path):
     return (int(m.group(1)) if m else 0, path.stat().st_mtime)
 
 
-def resolve_checkpoint(path=None, pattern="mini-llm-base-*.pt"):
+def resolve_checkpoint(path=None, pattern="mini-llm-base-*.pt", root=None):
     if path is None:
-        files = [f for f in MODELS_DIR.rglob(pattern) if not f.name.endswith(".state.pt")]
+        scan = MODELS_DIR if root is None else root
+        files = [f for f in scan.rglob(pattern) if not f.name.endswith(".state.pt")]
         if not files:
-            sys.exit(f"No {pattern} file under {MODELS_DIR}")
+            sys.exit(f"No {pattern} file under {scan}")
         return max(files, key=rank)
     p = Path(path)
     return p if p.exists() else MODELS_DIR / path

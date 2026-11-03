@@ -15,7 +15,7 @@ from mini_llm.checkpoints import (
     resolve_checkpoint,
     save_checkpoint,
 )
-from mini_llm.config import DATA_DIR, model_dir, resolve_device, size_millions
+from mini_llm.config import DATA_DIR, MODELS_DIR, model_dir, resolve_device, size_millions
 from mini_llm.pretrain import check_data_matches, default_batch
 from mini_llm.sft import batch_tensors, format_examples
 
@@ -25,15 +25,16 @@ EVAL_WINDOWS = 512
 
 
 def midtrain(steps=600, init=None, replay=REPLAY_SHARE, lr_max=1e-4, lr_min=1e-5, warmup=50,
-             batch=None, accum=None, save_every=200, device="auto"):
+             batch=None, accum=None, device="auto"):
     if not 0.0 <= replay < 1.0:
         sys.exit("--replay must be in [0, 1)")
     dev = resolve_device(device)
-    base = resolve_checkpoint(init)
-    ck = read_checkpoint(base, dev)
+    base = resolve_checkpoint(init, root=MODELS_DIR / "digit32k")
+    ck = read_checkpoint(base, "cpu")
     if ck.get("kind") != "base":
         sys.exit(f"{base.name} is a {ck.get('kind')} checkpoint: the format stage starts from a base model")
     start = int(ck.get("step") or 0)
+    del ck
     model, cfg = load_model(base, dev)
     if getattr(cfg, "lineage", "") != "digit32k":
         sys.exit("The format stage needs the 1.1 (digit32k) lineage: this base never saw a system turn")
@@ -45,8 +46,7 @@ def midtrain(steps=600, init=None, replay=REPLAY_SHARE, lr_max=1e-4, lr_min=1e-5
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = f"mini-llm-base-{tag}-{start + steps}steps"
     weights_path = out_dir / f"{stem}.pt"
-    state_path = out_dir / f"{stem}.state.pt"
-    if weights_path.exists() or state_path.exists():
+    if weights_path.exists():
         sys.exit(f"{stem} already exists. Delete it or ask for a different number of steps.")
 
     chat, extra = format_examples(tok, eos, cfg.ctx, True, size_millions(n_params))
@@ -175,17 +175,6 @@ def midtrain(steps=600, init=None, replay=REPLAY_SHARE, lr_max=1e-4, lr_min=1e-5
                 f"| lr {lr_at(step):.2e} | {time.time() - t0:.0f}s",
                 flush=True,
             )
-        done = step + 1
-        if save_every and done % save_every == 0 and done != steps:
-            val_loss = evaluate()
-            save_checkpoint(
-                state_path, model, cfg,
-                kind="base", step=start + done, total_steps=start + steps, val_loss=val_loss,
-                bits_per_byte=bits_per_byte(val_loss),
-                phase_start=start, optimizer=opt.state_dict(),
-                midtrain={"base": base.name, "steps": steps, "replay": replay},
-            )
-
     val_loss = evaluate()
     save_checkpoint(
         weights_path, model, cfg,
@@ -193,7 +182,6 @@ def midtrain(steps=600, init=None, replay=REPLAY_SHARE, lr_max=1e-4, lr_min=1e-5
         bits_per_byte=bits_per_byte(val_loss),
         phase_start=start, midtrain={"base": base.name, "steps": steps, "replay": replay},
     )
-    state_path.unlink(missing_ok=True)
     if val_loss is not None:
         bpb = bits_per_byte(val_loss)
         print(f"  >> val loss {val_loss:.3f}" + (f" | bits/byte {bpb:.3f}" if bpb else ""))
@@ -210,12 +198,11 @@ def main():
     ap.add_argument("--warmup", type=int, default=50)
     ap.add_argument("--batch", type=int, default=None)
     ap.add_argument("--accum", type=int, default=None)
-    ap.add_argument("--save-every", type=int, default=200)
     ap.add_argument("--device", default="auto")
     args = ap.parse_args()
     midtrain(
         args.steps, args.init, args.replay, args.lr_max, args.lr_min, args.warmup,
-        args.batch, args.accum, args.save_every, args.device,
+        args.batch, args.accum, args.device,
     )
 
 

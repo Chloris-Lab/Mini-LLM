@@ -118,7 +118,7 @@ def train_tokenizer(vocab, n_docs, lineage=""):
     tok.save(str(path))
 
 
-def existing_val(vocab, lineage):
+def existing_val(vocab, lineage, tok_hash):
     docs = DATA_DIR / VAL_DOCS
     val = DATA_DIR / "val.bin"
     if not docs.exists() or not val.exists():
@@ -129,6 +129,14 @@ def existing_val(vocab, lineage):
             f"data/{VAL_DOCS} holds vocab={stored.get('vocab')} lineage={stored.get('lineage', '')!r}: "
             f"rebuilding val.bin for vocab={vocab} lineage={lineage!r}"
         )
+        return None, 0
+    if "tokenizer_sha256" not in stored:
+        print(f"data/{VAL_DOCS} has no tokenizer hash: recording the current one, keeping val.bin")
+        stored["tokenizer_sha256"] = tok_hash
+        docs.write_text(json.dumps(stored))
+        return set(stored["hashes"]), val.stat().st_size // 2
+    if stored["tokenizer_sha256"] != tok_hash:
+        print(f"data/{VAL_DOCS} was built with another tokenizer: rebuilding val.bin")
         return None, 0
     return set(stored["hashes"]), val.stat().st_size // 2
 
@@ -171,8 +179,9 @@ def prep(target_millions=120, size=None, vocab=None, tokenizer_docs=None, lineag
         train_tokenizer(vocab, tokenizer_docs, lineage)
     tok = Tokenizer.from_file(str(tok_path))
     eos = tok.token_to_id("<eos>")
+    tok_hash = sha256_file(tok_path)
 
-    held, val_tokens = existing_val(vocab, lineage)
+    held, val_tokens = existing_val(vocab, lineage, tok_hash)
     writing_val = held is None
     val_hashes = []
     target = int(target_millions * 1_000_000) + (VAL_TOKENS if writing_val else 0)
@@ -237,12 +246,14 @@ def prep(target_millions=120, size=None, vocab=None, tokenizer_docs=None, lineag
         print(f"warning: source exhausted before target: {src}")
     if writing_val:
         (DATA_DIR / VAL_DOCS).write_text(
-            json.dumps({"vocab": vocab, "lineage": lineage, "hashes": val_hashes})
+            json.dumps(
+                {"vocab": vocab, "lineage": lineage, "tokenizer_sha256": tok_hash, "hashes": val_hashes}
+            )
         )
     meta = {
         "vocab": vocab,
         "lineage": lineage,
-        "tokenizer_sha256": sha256_file(tok_path),
+        "tokenizer_sha256": tok_hash,
         "seed": SEED,
         "min_doc_tokens": MIN_DOC_TOKENS,
         "train_tokens": train_tokens,
