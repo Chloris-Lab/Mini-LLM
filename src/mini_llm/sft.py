@@ -31,9 +31,11 @@ from mini_llm.system_prompts import (
 VAL_SIZE = 500
 MAX_TURNS = 4
 AI_MAX_SHARE = 0.25
+MATH_MAX_SHARE = 0.3
 IDENTITY_REPEAT = 5
 VARIATION_REPEAT = 5
 MATH_COUNT = 75_000
+STORY_COUNT = 20_000
 SKILL_COUNT = 10_000
 DATE_COUNT = 400
 DATE_SHARE = 0.9
@@ -200,7 +202,7 @@ def encode(name, items, tok, eos, ctx, clean=True):
     return kept
 
 
-def load_examples(tok, eos, ctx, with_system):
+def load_examples(tok, eos, ctx, with_system, chat_only=False):
     human, ai = [], []
     build = prompt_builder(with_system, 7)
     dolly_plain, dolly_context = dolly_pairs()
@@ -211,7 +213,7 @@ def load_examples(tok, eos, ctx, with_system):
         sources["dolly with context"] = dolly_context
     for name, fn in sources.items():
         human += encode(name, [pair_segments(build(), q, a) for q, a in fn], tok, eos, ctx)
-    if with_system:
+    if with_system and not chat_only:
         human += encode(
             "gsm8k",
             [pair_segments(build(MATH_SYSTEM_PROMPT), q, a) for q, a in gsm8k_pairs()],
@@ -234,7 +236,59 @@ def load_examples(tok, eos, ctx, with_system):
     return human + ai
 
 
-def sft(epochs=3, base=None, resume=False, device="auto", bs=None, accum=None,
+def format_examples(tok, eos, ctx, with_system, size):
+    build = prompt_builder(with_system, 8)
+    chat = load_examples(tok, eos, ctx, with_system, chat_only=True)
+    extra = encode(
+        "identity and arithmetic",
+        [pair_segments(build(), q, a) for q, a in identity_pairs(size, repeat=IDENTITY_REPEAT) + arithmetic_pairs()],
+        tok, eos, ctx, clean=False,
+    )
+    if with_system:
+        extra += encode(
+            "variations",
+            [pair_segments(system, q, a) for system, q, a in variation_pairs(VARIATION_REPEAT)],
+            tok, eos, ctx, clean=False,
+        )
+        extra += encode(
+            "dates",
+            [pair_segments(system, q, a) for system, q, a in date_pairs(DATE_COUNT)],
+            tok, eos, ctx, clean=False,
+        )
+    return chat, extra
+
+
+def supervised_tokens(items):
+    return sum(sum(mask) for _, mask in items)
+
+
+def cap_share(base, extras, share, seed=0):
+    budget = int(supervised_tokens(base) * share / (1 - share))
+    extras = list(extras)
+    random.Random(seed).shuffle(extras)
+    kept, used = [], 0
+    for ex in extras:
+        n = sum(ex[1])
+        if used + n > budget:
+            continue
+        kept.append(ex)
+        used += n
+    return kept
+
+
+def batch_tensors(items, eos, dev):
+    xs, ys = [], []
+    for ids, mask in items:
+        labels = [i if m else -100 for i, m in zip(ids, mask)]
+        xs.append(ids[:-1])
+        ys.append(labels[1:])
+    n = max(len(x) for x in xs)
+    x = torch.tensor([x + [eos] * (n - len(x)) for x in xs])
+    y = torch.tensor([y + [-100] * (n - len(y)) for y in ys])
+    return x.to(dev), y.to(dev)
+
+
+def sft(epochs=2, base=None, resume=False, device="auto", bs=None, accum=None,
         lr_max=None, lr_min=None, warmup=None):
     dev = resolve_device(device)
     base = resolve_checkpoint(base)
@@ -246,50 +300,36 @@ def sft(epochs=3, base=None, resume=False, device="auto", bs=None, accum=None,
 
     n_params = sum(p.numel() for p in model.parameters())
 
-    data = load_examples(tok, eos, cfg.ctx, with_system)
-    random.Random(0).shuffle(data)
-    val, train = data[:VAL_SIZE], data[VAL_SIZE:]
+    chat, extra = format_examples(tok, eos, cfg.ctx, with_system, size_millions(n_params))
+    random.Random(0).shuffle(chat)
+    val, train = chat[:VAL_SIZE], chat[VAL_SIZE:]
+    train = train + extra
 
-    build = prompt_builder(with_system, 8)
-    extra_ident = identity_pairs(size_millions(n_params), repeat=IDENTITY_REPEAT) + arithmetic_pairs()
-    train += encode(
-        "identity and arithmetic",
-        [pair_segments(build(), q, a) for q, a in extra_ident],
-        tok, eos, cfg.ctx, clean=False,
-    )
+    maths = []
     if with_system:
-        train += encode(
-            "variations",
-            [pair_segments(system, q, a) for system, q, a in variation_pairs(VARIATION_REPEAT)],
-            tok, eos, cfg.ctx, clean=False,
-        )
-        train += encode(
-            "dates",
-            [pair_segments(system, q, a) for system, q, a in date_pairs(DATE_COUNT)],
-            tok, eos, cfg.ctx, clean=False,
-        )
-        train += encode(
+        build = prompt_builder(with_system, 8)
+        maths += encode(
             "math",
             [pair_segments(build(), q, a) for q, a in math_data.synthetic_pairs(MATH_COUNT)],
             tok, eos, cfg.ctx, clean=False,
         )
-        train += encode(
+        maths += encode(
+            "stories",
+            [pair_segments(build(), q, a) for q, a in math_data.story_pairs(STORY_COUNT)],
+            tok, eos, cfg.ctx, clean=False,
+        )
+        maths += encode(
             "skills",
             [pair_segments(build(), q, a) for q, a in math_data.skill_pairs(SKILL_COUNT)],
             tok, eos, cfg.ctx, clean=False,
         )
+        kept = cap_share(train, maths, MATH_MAX_SHARE)
+        print(f"math: {len(kept)}/{len(maths)} examples kept (cap {MATH_MAX_SHARE:.0%} of supervised tokens)")
+        train = train + kept
     print(f"{len(train)} train examples, {len(val)} validation examples")
 
     def make_batch(items):
-        xs, ys = [], []
-        for ids, mask in items:
-            labels = [i if m else -100 for i, m in zip(ids, mask)]
-            xs.append(ids[:-1])
-            ys.append(labels[1:])
-        n = max(len(x) for x in xs)
-        x = torch.tensor([x + [eos] * (n - len(x)) for x in xs])
-        y = torch.tensor([y + [-100] * (n - len(y)) for y in ys])
-        return x.to(dev), y.to(dev)
+        return batch_tensors(items, eos, dev)
 
     dbs, dacc = (8, 2) if dev == "cuda" else (2, 8)
     bs = dbs if bs is None else bs
@@ -384,7 +424,7 @@ def sft(epochs=3, base=None, resume=False, device="auto", bs=None, accum=None,
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("epochs", type=int, nargs="?", default=3)
+    ap.add_argument("epochs", type=int, nargs="?", default=2)
     ap.add_argument("base", nargs="?")
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--device", default="auto")
