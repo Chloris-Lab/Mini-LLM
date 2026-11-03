@@ -149,3 +149,55 @@ def test_digit_pre_tokenizer_isolates_digits():
     pieces = [t for t, _ in digit_pre_tokenizer().pre_tokenize_str("abc 1234 GPT4 3,472")]
     assert "1234" not in pieces and "472" not in pieces
     assert all(len(p) <= 1 or not p[-1].isdigit() or not p[0].isdigit() for p in pieces)
+
+
+STORY_ONE = re.compile(r"^(\d+) ([+\-x/]) (\d+) = (-?\d+)\. The answer is (-?\d+)\.$")
+STORY_TWO = re.compile(r"^(\d+) \+ (\d+) = (\d+), then (\d+) - (\d+) = (\d+)\. The answer is (\d+)\.$")
+
+
+def story_label(answer):
+    m = STORY_ONE.match(answer)
+    if m:
+        return {"+": "add", "-": "sub", "x": "mul", "/": "div"}[m[2]]
+    return "two" if STORY_TWO.match(answer) else "other"
+
+
+def check_story(question, answer):
+    assert question.endswith("?"), question
+    assert answer.startswith(("0", "1", "2", "3", "4", "5", "6", "7", "8", "9")), answer
+    m = STORY_ONE.match(answer)
+    if m:
+        a, sign, b, mid, final = int(m[1]), m[2], int(m[3]), int(m[4]), int(m[5])
+        expected = {"+": a + b, "-": a - b, "x": a * b}.get(sign)
+        if sign == "/":
+            assert b != 0 and a % b == 0, (question, answer)
+            expected = a // b
+        assert mid == expected == final, (question, answer)
+        return
+    m = STORY_TWO.match(answer)
+    assert m, (question, answer)
+    a, b, step, step_again, give, left, final = (int(m[i]) for i in range(1, 8))
+    assert step == a + b == step_again, (question, answer)
+    assert left == step - give == final, (question, answer)
+
+
+def test_story_pairs_are_correct_and_deterministic():
+    pairs = math_data.story_pairs(400, seed=21)
+    assert len(pairs) == 400
+    assert pairs == math_data.story_pairs(400, seed=21)
+    for question, answer in pairs:
+        check_story(question, answer)
+
+
+def test_story_pairs_cover_every_kind():
+    kinds = {story_label(answer) for _, answer in math_data.story_pairs(300, seed=22)}
+    assert kinds == {"add", "sub", "mul", "div", "two"}
+
+
+def test_story_answers_stay_short_and_plain():
+    for question, answer in math_data.story_pairs(200, seed=23):
+        assert len(answer) <= 80, answer
+        assert "$" not in answer
+        assert not re.search(r"\d,\d", answer), answer
+        assert question.count("?") == 1
+

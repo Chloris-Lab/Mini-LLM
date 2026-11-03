@@ -166,3 +166,75 @@ def skill_pairs(count, seed=2):
     rng = random.Random(seed + 2)
     names = [f for f, w in SKILLS for _ in range(w)]
     return [rng.choice(names)(rng) for _ in range(count)]
+
+
+STORY_NAMES = ["Ana", "Ben", "Maya", "Leo", "Sara", "Tom", "Nina", "Omar", "Lily", "Raj"]
+STORY_ITEMS = [
+    ("apple", "apples"), ("pencil", "pencils"), ("cookie", "cookies"), ("marble", "marbles"),
+    ("book", "books"), ("sticker", "stickers"), ("coin", "coins"), ("egg", "eggs"),
+    ("orange", "oranges"), ("card", "cards"), ("ticket", "tickets"), ("shell", "shells"),
+]
+STORY_KINDS = ["add", "sub", "mul", "div", "two"]
+STORY_WEIGHTS = [3, 3, 2, 2, 2]
+
+
+def story_add(rng):
+    name = rng.choice(STORY_NAMES)
+    many = rng.choice(STORY_ITEMS)[1]
+    a, b = rng.randint(2, 40), rng.randint(2, 30)
+    question = f"{name} has {a} {many} and buys {b} more. How many {many} does {name} have now?"
+    return question, f"{a} + {b} = {a + b}. The answer is {a + b}."
+
+
+def story_sub(rng):
+    name, other = rng.sample(STORY_NAMES, 2)
+    many = rng.choice(STORY_ITEMS)[1]
+    a = rng.randint(5, 60)
+    b = rng.randint(2, a - 1)
+    question = f"{name} has {a} {many} and gives {b} to {other}. How many {many} are left?"
+    return question, f"{a} - {b} = {a - b}. The answer is {a - b}."
+
+
+def story_mul(rng):
+    name = rng.choice(STORY_NAMES)
+    many = rng.choice(STORY_ITEMS)[1]
+    boxes, per = rng.randint(2, 12), rng.randint(2, 12)
+    question = f"{name} has {boxes} boxes with {per} {many} in each box. How many {many} are there in total?"
+    return question, f"{boxes} x {per} = {boxes * per}. The answer is {boxes * per}."
+
+
+def story_div(rng):
+    name = rng.choice(STORY_NAMES)
+    many = rng.choice(STORY_ITEMS)[1]
+    per, friends = rng.randint(2, 9), rng.randint(2, 9)
+    total = per * friends
+    question = f"{name} shares {total} {many} equally among {friends} friends. How many {many} does each friend get?"
+    return question, f"{total} / {friends} = {per}. The answer is {per}."
+
+
+def story_two_step(rng):
+    name, other = rng.sample(STORY_NAMES, 2)
+    many = rng.choice(STORY_ITEMS)[1]
+    a, b = rng.randint(3, 30), rng.randint(3, 25)
+    give = rng.randint(1, a + b - 2)
+    total, left = a + b, a + b - give
+    question = (
+        f"{name} picks {a} {many} on Monday and {b} {many} on Tuesday. "
+        f"Then {name} gives {give} {many} to {other}. How many {many} does {name} have left?"
+    )
+    return question, f"{a} + {b} = {total}, then {total} - {give} = {left}. The answer is {left}."
+
+
+STORY_MAKERS = {
+    "add": story_add, "sub": story_sub, "mul": story_mul, "div": story_div, "two": story_two_step,
+}
+
+
+def story_pair(rng):
+    return STORY_MAKERS[rng.choices(STORY_KINDS, weights=STORY_WEIGHTS)[0]](rng)
+
+
+def story_pairs(count, seed=4):
+    rng = random.Random(seed + 4)
+    return [story_pair(rng) for _ in range(count)]
+
