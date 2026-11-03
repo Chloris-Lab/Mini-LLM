@@ -2,7 +2,8 @@
 
 Small assistants (~40M and ~150M parameters on the 32k tokenizer lineage) trained
 **end-to-end** with PyTorch — custom BPE tokenizer, transformer decoder architecture,
-pretraining and SFT, no pretrained backbone. The previous 1.0 generation (34M/70M,
+pretraining, a format stage and SFT, no pretrained backbone. The previous 1.0
+generation (34M/70M,
 16k tokenizer) is documented in the
 [archive section](https://github.com/Mini-llm-lab/Documentation/blob/main/Mini-LLM/architecture.md#generation-10)
 of the architecture page.
@@ -10,8 +11,9 @@ of the architecture page.
 Training runs on NVIDIA GPUs (CUDA).
 
 The 150M **1.1** (`models/digit32k/`) is the current cloud recipe: digit-split
-tokenizer, 2048-token context, system-prompt format, arithmetic / date following /
-markdown / multi-turn SFT, ~7B-token pretraining budget — see
+tokenizer, 2048-token context, system-prompt format, a format stage before SFT,
+arithmetic / date following / markdown / multi-turn SFT, ~7B-token pretraining
+budget — see
 [training](https://github.com/Mini-llm-lab/Documentation/blob/main/Mini-LLM/training.md) and
 [cloud GPU](https://github.com/Mini-llm-lab/Documentation/blob/main/Mini-LLM/cloud-gpu.md).
 

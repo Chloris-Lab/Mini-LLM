@@ -11,6 +11,7 @@ MODULES = [
     "mini_llm.heldout",
     "mini_llm.identity",
     "mini_llm.math_data",
+    "mini_llm.midtrain",
     "mini_llm.model",
     "mini_llm.modeling_mini_llm",
     "mini_llm.prep",

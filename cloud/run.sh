@@ -37,6 +37,11 @@ SFT_LR_WARMUP=${SFT_LR_WARMUP:-50}
 TEACHER=${TEACHER:-}
 KD_WEIGHT=${KD_WEIGHT:-0.5}
 KD_TEMP=${KD_TEMP:-2.0}
+MID_STEPS=${MID_STEPS:-600}
+MID_REPLAY=${MID_REPLAY:-0.3}
+MID_LR_MAX=${MID_LR_MAX:-1e-4}
+MID_LR_MIN=${MID_LR_MIN:-1e-5}
+MID_WARMUP=${MID_WARMUP:-50}
 
 EXPECT_VOCAB=$VOCAB
 case "$SIZE" in
@@ -45,6 +50,7 @@ case "$SIZE" in
 esac
 
 BASE="models/${LINEAGE_DIR}/${SIZE}/mini-llm-base-${SIZE}-${STEPS}steps.pt"
+MID_BASE="models/${LINEAGE_DIR}/${SIZE}/mini-llm-base-${SIZE}-$((STEPS + MID_STEPS))steps.pt"
 ASSISTANT="models/${LINEAGE_DIR}/${SIZE}/mini-llm-assistant-${SIZE}.pt"
 
 export UV_CACHE_DIR=/workspace/.uv-cache
@@ -136,11 +142,23 @@ train)
   setsid nohup "${args[@]}" >"$LOGDIR/train.log" 2>&1 < /dev/null &
   echo "train started (${args[*]}) -> $LOGDIR/train.log"
   ;;
+midtrain)
+  if [ "$LINEAGE_DIR" != "digit32k" ]; then
+    echo "midtrain needs the 1.1 lineage (digit32k); SIZE=$SIZE is $LINEAGE_DIR." >&2
+    exit 1
+  fi
+  mid_args=(uv run midtrain "$MID_STEPS" --init "$BASE" --device cuda
+            --replay "$MID_REPLAY" --lr-max "$MID_LR_MAX" --lr-min "$MID_LR_MIN" --warmup "$MID_WARMUP")
+  setsid nohup "${mid_args[@]}" >"$LOGDIR/midtrain.log" 2>&1 < /dev/null &
+  echo "midtrain started (${mid_args[*]}) -> $LOGDIR/midtrain.log"
+  ;;
 sft)
-  setsid nohup uv run sft 2 "$BASE" --device cuda \
+  SFT_BASE="$BASE"
+  if [ -f "$MID_BASE" ]; then SFT_BASE="$MID_BASE"; fi
+  setsid nohup uv run sft 2 "$SFT_BASE" --device cuda \
     --lr-max "$SFT_LR_MAX" --lr-min "$SFT_LR_MIN" --warmup "$SFT_LR_WARMUP" \
     >"$LOGDIR/sft.log" 2>&1 < /dev/null &
-  echo "sft started (2 epochs on $BASE, lr $SFT_LR_MAX -> $SFT_LR_MIN, warmup $SFT_LR_WARMUP) -> $LOGDIR/sft.log"
+  echo "sft started (2 epochs on $SFT_BASE, lr $SFT_LR_MAX -> $SFT_LR_MIN, warmup $SFT_LR_WARMUP) -> $LOGDIR/sft.log"
   ;;
 eval)
   EVAL_DIR="${MINI_EVAL_DIR:-../Mini-Eval}"
@@ -186,7 +204,7 @@ export-hf)
   uv run export "$ASSISTANT"
   ;;
 *)
-  echo "usage: $0 {setup|prep|teacher|test|smoke|train|sft|eval|status|pack|export-hf}"
+  echo "usage: $0 {setup|prep|teacher|test|smoke|train|midtrain|sft|eval|status|pack|export-hf}"
   exit 1
   ;;
 esac
