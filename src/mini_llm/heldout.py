@@ -6,7 +6,7 @@ import torch
 from mini_llm import math_data
 from mini_llm.chat import default_system
 from mini_llm.checkpoints import load_model, load_tokenizer, resolve_checkpoint
-from mini_llm.config import resolve_device
+from mini_llm.config import assistant_pattern, base_pattern, resolve_device
 from mini_llm.prompt import format_prompt
 from mini_llm.system_prompts import UNCERTAINTY_PAIRS, VARIATIONS, date_pairs
 
@@ -154,7 +154,7 @@ def main():
     args = ap.parse_args()
 
     dev = resolve_device(args.device)
-    pattern = "mini-llm-base-*.pt" if args.base else "mini-llm-assistant-*.pt"
+    pattern = base_pattern() if args.base else assistant_pattern()
     path = resolve_checkpoint(args.checkpoint, pattern=pattern)
     model, cfg = load_model(path, dev)
     model.eval()

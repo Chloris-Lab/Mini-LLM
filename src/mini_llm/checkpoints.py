@@ -8,10 +8,11 @@ from pathlib import Path
 import torch
 from tokenizers import Tokenizer
 
-from mini_llm.config import MODELS_DIR, Cfg
+from mini_llm.config import MODELS_DIR, Cfg, assistant_pattern, base_pattern
 from mini_llm.model import LLM
 
 STEPS_RE = re.compile(r"-(\d+)steps")
+RELEASE_RE = re.compile(r"^petal-\d+(?:\.\d+)*-\d+M\.pt$")
 
 
 def sha256_file(path):
@@ -27,10 +28,20 @@ def rank(path):
     return (int(m.group(1)) if m else 0, path.stat().st_mtime)
 
 
-def resolve_checkpoint(path=None, pattern="mini-llm-base-*.pt", root=None):
+def resolve_checkpoint(path=None, pattern=None, root=None):
     if path is None:
         scan = MODELS_DIR if root is None else root
+        if pattern is None:
+            pattern = base_pattern()
         files = [f for f in scan.rglob(pattern) if not f.name.endswith(".state.pt")]
+        if pattern == assistant_pattern():
+            files = [f for f in files if RELEASE_RE.match(f.name)]
+        if not files and pattern in (base_pattern(), assistant_pattern()):
+            legacy = (
+                "mini-llm-base-*.pt" if pattern == base_pattern()
+                else "mini-llm-assistant-*.pt"
+            )
+            files = [f for f in scan.rglob(legacy) if not f.name.endswith(".state.pt")]
         if not files:
             sys.exit(f"No {pattern} file under {scan}")
         return max(files, key=rank)

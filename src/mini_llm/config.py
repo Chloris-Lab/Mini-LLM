@@ -1,3 +1,4 @@
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -29,6 +30,26 @@ def tokenizer_path(vocab, lineage=""):
 
 def model_dir(vocab, tag, lineage=""):
     return tokenizer_dir(vocab, lineage) / tag
+
+
+MODEL_NAME = "petal"
+MODEL_VERSION = os.environ.get("PETAL_VERSION", "1")
+
+
+def release_name():
+    return f"{MODEL_NAME}-{MODEL_VERSION}"
+
+
+def model_stem(tag):
+    return f"{release_name()}-{tag}"
+
+
+def base_pattern():
+    return f"{MODEL_NAME}-*-base-*.pt"
+
+
+def assistant_pattern():
+    return f"{MODEL_NAME}-*-*M.pt"
 
 
 @dataclass

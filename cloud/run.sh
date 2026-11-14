@@ -3,6 +3,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 SIZE=${SIZE:-150M}
+PETAL_VERSION=${PETAL_VERSION:-1}
 
 recipe_steps() {
   case "$1" in 150M) echo 53375 ;; 40M) echo 35096 ;; 70M) echo 22000 ;; *) echo 3000 ;; esac
@@ -49,9 +50,9 @@ case "$SIZE" in
   *)    LINEAGE_DIR="$((EXPECT_VOCAB / 1024))k" ;;
 esac
 
-BASE="models/${LINEAGE_DIR}/${SIZE}/mini-llm-base-${SIZE}-${STEPS}steps.pt"
-MID_BASE="models/${LINEAGE_DIR}/${SIZE}/mini-llm-base-${SIZE}-$((STEPS + MID_STEPS))steps.pt"
-ASSISTANT="models/${LINEAGE_DIR}/${SIZE}/mini-llm-assistant-${SIZE}.pt"
+BASE="models/${LINEAGE_DIR}/${SIZE}/petal-${PETAL_VERSION}-${SIZE}-base-${STEPS}steps.pt"
+MID_BASE="models/${LINEAGE_DIR}/${SIZE}/petal-${PETAL_VERSION}-${SIZE}-base-$((STEPS + MID_STEPS))steps.pt"
+ASSISTANT="models/${LINEAGE_DIR}/${SIZE}/petal-${PETAL_VERSION}-${SIZE}.pt"
 
 export UV_CACHE_DIR=/workspace/.uv-cache
 export UV_LINK_MODE=copy
@@ -83,7 +84,7 @@ setup)
   EVAL_DIR="${MINI_EVAL_DIR:-../Mini-Eval}"
   if [ ! -f "$EVAL_DIR/pyproject.toml" ]; then
     echo "Mini-Eval not found at $EVAL_DIR, cloning..."
-    git clone "${MINI_EVAL_URL:-https://github.com/Mini-llm-lab/Mini-Eval.git}" "$EVAL_DIR" \
+    git clone "${MINI_EVAL_URL:-https://github.com/Chloris-Lab/Mini-Eval.git}" "$EVAL_DIR" \
       || { echo "Mini-Eval is required by test/eval: clone it at $EVAL_DIR or set MINI_EVAL_URL." >&2; exit 1; }
   fi
   SIZE="$SIZE" cloud/preflight.sh
@@ -126,7 +127,7 @@ smoke)
     args+=(--teacher "$TEACHER" --kd-weight "$KD_WEIGHT" --kd-temp "$KD_TEMP")
   fi
   "${args[@]}"
-  rm -f models/*/*/mini-llm-base-*-100steps*.pt
+  rm -f models/*/*/petal-*-*-base-*-100steps*.pt
   echo "smoke done, note the tok/s above"
   ;;
 train)
@@ -136,7 +137,7 @@ train)
   if [ -n "$TEACHER" ]; then
     args+=(--teacher "$TEACHER" --kd-weight "$KD_WEIGHT" --kd-temp "$KD_TEMP")
   fi
-  if compgen -G "models/*/*/mini-llm-base-*-${STEPS}steps.state.pt" > /dev/null; then
+  if compgen -G "models/*/*/petal-*-*-base-*-${STEPS}steps.state.pt" > /dev/null; then
     args+=(--resume)
   fi
   setsid nohup "${args[@]}" >"$LOGDIR/train.log" 2>&1 < /dev/null &
@@ -162,12 +163,15 @@ sft)
   ;;
 eval)
   EVAL_DIR="${MINI_EVAL_DIR:-../Mini-Eval}"
-  default_models="mini-llm-40M-35096steps mini-llm-150M-34332steps mini-llm-70M-22000steps SmolLM2-135M gemma-3-270m pythia-160m-step143000 pythia-70m-step143000"
+  default_models="mini-llm-150M-base SmolLM2-135M gemma-3-270m pythia-160m-step143000 pythia-70m-step143000"
   read -r -a MODELS <<< "${EVAL_MODELS:-$default_models}"
-  check_model="${EVAL_CHECK:-${MODELS[0]}}"
-  setsid nohup bash -c "cd '$EVAL_DIR' && uv run mini-eval check '$check_model' --device cuda && uv run mini-eval run small_lm ${MODELS[*]} --device cuda --require-clean" \
+  check_args=""
+  if [ -n "${EVAL_CHECK:-}" ]; then
+    check_args="uv run mini-eval check '${EVAL_CHECK}' --device cuda && "
+  fi
+  setsid nohup bash -c "cd '$EVAL_DIR' && ${check_args}uv run mini-eval run small_lm ${MODELS[*]} --device cuda --require-clean" \
     >"$LOGDIR/eval.log" 2>&1 < /dev/null &
-  echo "eval started (check $check_model, then ${#MODELS[@]} models, protocol v2) -> $LOGDIR/eval.log"
+  echo "eval started (${EVAL_CHECK:-no check, default list has no native model} + ${#MODELS[@]} models, protocol v3) -> $LOGDIR/eval.log"
   ;;
 status)
   nvidia-smi || true
@@ -184,8 +188,8 @@ status)
 pack)
   TOK="models/${LINEAGE_DIR}/tok.json"
   files=("$TOK" data/meta.json)
-  while IFS= read -r f; do files+=("$f"); done < <(find models -maxdepth 3 -name "mini-llm-base-${SIZE}-*.pt" ! -name '*.state.pt' ! -name '*.at*.pt' | sort)
-  while IFS= read -r f; do files+=("$f"); done < <(find models -maxdepth 3 -name "mini-llm-assistant-${SIZE}.pt" | sort)
+  while IFS= read -r f; do files+=("$f"); done < <(find models -maxdepth 3 \( -name "petal-*-${SIZE}-base-*.pt" -o -name "mini-llm-base-${SIZE}-*.pt" \) ! -name '*.state.pt' ! -name '*.at*.pt' | sort)
+  while IFS= read -r f; do files+=("$f"); done < <(find models -maxdepth 3 \( -regex '.*/petal-[0-9.]+-${SIZE}\.pt' -o -name "mini-llm-assistant-${SIZE}.pt" \) | sort)
   tar -cf /workspace/export.tar "${files[@]}"
   EVAL_DIR="${MINI_EVAL_DIR:-../Mini-Eval}"
   if [ -d "$EVAL_DIR/results" ]; then

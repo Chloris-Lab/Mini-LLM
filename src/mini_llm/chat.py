@@ -3,7 +3,7 @@ import sys
 import torch
 
 from mini_llm.checkpoints import load_model, load_tokenizer, resolve_checkpoint
-from mini_llm.config import get_device
+from mini_llm.config import assistant_pattern, get_device
 from mini_llm.prompt import DEFAULT_SYSTEM_PROMPT, build_system_prompt, current_date, format_history
 
 TEMPERATURE = 0.5
@@ -48,7 +48,7 @@ def reply(model, tok, eos, dev, question, history=(), ctx=None, system=None):
 
 def chat(path=None):
     dev = get_device()
-    path = resolve_checkpoint(path, pattern="mini-llm-assistant-*.pt")
+    path = resolve_checkpoint(path, pattern=assistant_pattern())
     print(f"[{path.name}] Ctrl+C to quit, /quit to exit (keeps the last {HISTORY_TURNS} answers)")
     model, cfg = load_model(path, dev)
     model.eval()

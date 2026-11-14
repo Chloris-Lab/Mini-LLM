@@ -23,6 +23,7 @@ from mini_llm.config import (
     DATA_DIR,
     get_preset,
     model_dir,
+    model_stem,
     resolve_device,
     size_millions,
     tokenizer_path,
@@ -215,7 +216,7 @@ def pretrain(steps=5000, resume=False, init=None, size="40M", dim=None, layers=N
     tag = f"{size_millions(n_params)}M"
     out_dir = model_dir(cfg.vocab, tag, getattr(cfg, "lineage", ""))
     out_dir.mkdir(parents=True, exist_ok=True)
-    stem = f"mini-llm-base-{tag}-{steps}steps"
+    stem = f"{model_stem(tag)}-base-{steps}steps"
     weights_path = out_dir / f"{stem}.pt"
     state_path = out_dir / f"{stem}.state.pt"
     print(f"device: {dev}")

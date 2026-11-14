@@ -15,7 +15,7 @@ from mini_llm.checkpoints import (
     resolve_checkpoint,
     save_checkpoint,
 )
-from mini_llm.config import DATA_DIR, MODELS_DIR, model_dir, resolve_device, size_millions
+from mini_llm.config import DATA_DIR, MODELS_DIR, model_dir, model_stem, resolve_device, size_millions
 from mini_llm.pretrain import check_data_matches, default_batch
 from mini_llm.sft import batch_tensors, format_examples
 
@@ -44,7 +44,7 @@ def midtrain(steps=600, init=None, replay=REPLAY_SHARE, lr_max=1e-4, lr_min=1e-5
     tag = f"{size_millions(n_params)}M"
     out_dir = model_dir(cfg.vocab, tag, cfg.lineage)
     out_dir.mkdir(parents=True, exist_ok=True)
-    stem = f"mini-llm-base-{tag}-{start + steps}steps"
+    stem = f"{model_stem(tag)}-base-{start + steps}steps"
     weights_path = out_dir / f"{stem}.pt"
     if weights_path.exists():
         sys.exit(f"{stem} already exists. Delete it or ask for a different number of steps.")
