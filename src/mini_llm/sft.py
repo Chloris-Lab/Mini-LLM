@@ -16,10 +16,11 @@ from mini_llm.checkpoints import (
     resolve_checkpoint,
     save_checkpoint,
 )
-from mini_llm.config import resolve_device, size_millions
+from mini_llm.config import model_stem, resolve_device, size_millions
 from mini_llm import math_data
 from mini_llm.identity import arithmetic_pairs, identity_pairs
 from mini_llm.prompt import DEFAULT_SYSTEM_PROMPT, build_system_prompt, format_prompt
+from mini_llm.decontam import contamination_set, contaminated
 from mini_llm.system_prompts import (
     MATH_SYSTEM_PROMPT,
     SYSTEM_PARAPHRASES,
@@ -202,21 +203,35 @@ def encode(name, items, tok, eos, ctx, clean=True):
     return kept
 
 
-def load_examples(tok, eos, ctx, with_system, chat_only=False):
+def load_examples(tok, eos, ctx, with_system, chat_only=False, decontam=True):
+    bad = contamination_set() if decontam else None
+    if bad is not None:
+        print(f"decontamination index: {len(bad)} n-grams (SFT)")
     human, ai = [], []
     build = prompt_builder(with_system, 7)
     dolly_plain, dolly_context = dolly_pairs()
     no_robots, no_robots_multi = no_robots_pairs()
     oasst, oasst_multi = oasst_pairs()
-    sources = {"dolly": dolly_plain, "no_robots": no_robots, "oasst2": oasst}
+
+    def clean(pairs):
+        if bad is None:
+            return pairs
+        return [(q, a) for q, a in pairs if not contaminated(q, bad)]
+
+    def clean_conversations(conversations):
+        if bad is None:
+            return conversations
+        return [c for c in conversations if all(not contaminated(q, bad) for q, a in c)]
+
+    sources = {"dolly": clean(dolly_plain), "no_robots": clean(no_robots), "oasst2": clean(oasst)}
     if with_system:
-        sources["dolly with context"] = dolly_context
+        sources["dolly with context"] = clean(dolly_context)
     for name, fn in sources.items():
         human += encode(name, [pair_segments(build(), q, a) for q, a in fn], tok, eos, ctx)
     if with_system and not chat_only:
         human += encode(
             "gsm8k",
-            [pair_segments(build(MATH_SYSTEM_PROMPT), q, a) for q, a in gsm8k_pairs()],
+            [pair_segments(build(MATH_SYSTEM_PROMPT), q, a) for q, a in clean(gsm8k_pairs())],
             tok, eos, ctx,
         )
     for name, conversations in (("no_robots multi-turn", no_robots_multi), ("oasst2 multi-turn", oasst_multi)):
@@ -224,10 +239,10 @@ def load_examples(tok, eos, ctx, with_system, chat_only=False):
             continue
         human += encode(
             name,
-            [conversation_segments(build(), [tuple(t) for t in c]) for c in conversations],
+            [conversation_segments(build(), [tuple(t) for t in c]) for c in clean_conversations(conversations)],
             tok, eos, ctx, clean=False,
         )
-    for name, fn in {"alpaca": alpaca_pairs}.items():
+    for name, fn in {"alpaca": lambda: clean(alpaca_pairs())}.items():
         ai += encode(name, [pair_segments(build(), q, a) for q, a in fn()], tok, eos, ctx)
     cap = int(len(human) * AI_MAX_SHARE / (1 - AI_MAX_SHARE))
     random.Random(0).shuffle(ai)
@@ -236,9 +251,9 @@ def load_examples(tok, eos, ctx, with_system, chat_only=False):
     return human + ai
 
 
-def format_examples(tok, eos, ctx, with_system, size):
+def format_examples(tok, eos, ctx, with_system, size, decontam=True):
     build = prompt_builder(with_system, 8)
-    chat = load_examples(tok, eos, ctx, with_system, chat_only=True)
+    chat = load_examples(tok, eos, ctx, with_system, chat_only=True, decontam=decontam)
     extra = encode(
         "identity and arithmetic",
         [pair_segments(build(), q, a) for q, a in identity_pairs(size, repeat=IDENTITY_REPEAT) + arithmetic_pairs()],
@@ -289,7 +304,7 @@ def batch_tensors(items, eos, dev):
 
 
 def sft(epochs=2, base=None, resume=False, device="auto", bs=None, accum=None,
-        lr_max=None, lr_min=None, warmup=None):
+        lr_max=None, lr_min=None, warmup=None, decontam=True):
     dev = resolve_device(device)
     base = resolve_checkpoint(base)
     print(f"base: {base.name} | device: {dev}")
@@ -300,7 +315,7 @@ def sft(epochs=2, base=None, resume=False, device="auto", bs=None, accum=None,
 
     n_params = sum(p.numel() for p in model.parameters())
 
-    chat, extra = format_examples(tok, eos, cfg.ctx, with_system, size_millions(n_params))
+    chat, extra = format_examples(tok, eos, cfg.ctx, with_system, size_millions(n_params), decontam=decontam)
     random.Random(0).shuffle(chat)
     val, train = chat[:VAL_SIZE], chat[VAL_SIZE:]
     train = train + extra
@@ -362,8 +377,9 @@ def sft(epochs=2, base=None, resume=False, device="auto", bs=None, accum=None,
         model.train()
         return sum(losses) / len(losses)
 
-    out_path = base.parent / f"mini-llm-assistant-{size_millions(n_params)}M.pt"
-    state_path = base.parent / f"mini-llm-assistant-{size_millions(n_params)}M.state.pt"
+    tag = f"{size_millions(n_params)}M"
+    out_path = base.parent / f"{model_stem(tag)}.pt"
+    state_path = base.parent / f"{model_stem(tag)}.state.pt"
 
     best = float("inf")
     step, start_epoch = 0, 0
@@ -433,9 +449,11 @@ def main():
     ap.add_argument("--lr-max", type=float, default=None, help="peak learning rate of the SFT cosine")
     ap.add_argument("--lr-min", type=float, default=None, help="final learning rate of the SFT cosine")
     ap.add_argument("--warmup", type=int, default=None, help="warmup steps before the cosine decay")
+    ap.add_argument("--no-decontam", dest="decontam", action="store_false",
+                    help="skip the 13-gram decontamination of the SFT mix (not allowed for reported runs)")
     args = ap.parse_args()
     sft(args.epochs, args.base, args.resume, args.device, args.bs, args.accum,
-        args.lr_max, args.lr_min, args.warmup)
+        args.lr_max, args.lr_min, args.warmup, args.decontam)
 
 
 if __name__ == "__main__":

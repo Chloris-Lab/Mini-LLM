@@ -14,6 +14,7 @@ from tokenizers import Tokenizer, decoders, models, pre_tokenizers, trainers
 
 from mini_llm.checkpoints import sha256_file
 from mini_llm.config import DATA_DIR, MODELS_DIR, Cfg, get_preset, tokenizer_path
+from mini_llm.decontam import contamination_set, contaminated
 
 SOURCES = [
     ("HuggingFaceFW/fineweb-edu", "sample-10BT", 0.7),
@@ -100,7 +101,7 @@ def doc_hash(text):
     return hashlib.blake2b(text.encode("utf-8"), digest_size=16).hexdigest()
 
 
-def train_tokenizer(vocab, n_docs, lineage=""):
+def train_tokenizer(vocab, n_docs, lineage="", bad=None):
     path = tokenizer_path(vocab, lineage)
     tok = Tokenizer(models.BPE())
     tok.pre_tokenizer = digit_pre_tokenizer() if lineage else pre_tokenizers.ByteLevel(add_prefix_space=False)
@@ -111,7 +112,7 @@ def train_tokenizer(vocab, n_docs, lineage=""):
         initial_alphabet=pre_tokenizers.ByteLevel.alphabet(),
     )
     t0 = time.time()
-    docs = (text for _, text in zip(range(n_docs), (t for _, t in texts())))
+    docs = (t for _, t in zip(range(n_docs), texts()) if bad is None or not contaminated(t, bad))
     tok.train_from_iterator(docs, trainer)
     print(f"tokenizer: vocab={vocab} lineage={lineage or 'classic'} from {n_docs} docs in {time.time() - t0:.0f}s")
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -156,13 +157,18 @@ def mixture_report(meta):
     print(f"mixture by tokens: {rows}")
 
 
-def prep(target_millions=120, size=None, vocab=None, tokenizer_docs=None, lineage=""):
+def prep(target_millions=120, size=None, vocab=None, tokenizer_docs=None, lineage="", decontam=True):
     if vocab is None:
         vocab = get_preset(size).vocab if size else Cfg().vocab
     if lineage is None:
         lineage = get_preset(size).lineage if size else ""
     if tokenizer_docs is None:
         tokenizer_docs = TOKENIZER_DOCS_LARGE_VOCAB if vocab > Cfg().vocab else TOKENIZER_DOCS
+    bad = None
+    if decontam:
+        print("Loading benchmark test sets for the 13-gram decontamination index ...")
+        bad = contamination_set()
+        print(f"Decontamination index: {len(bad)} n-grams; overlapping documents will be dropped.")
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -176,7 +182,7 @@ def prep(target_millions=120, size=None, vocab=None, tokenizer_docs=None, lineag
             )
     else:
         print("Training the BPE tokenizer...")
-        train_tokenizer(vocab, tokenizer_docs, lineage)
+        train_tokenizer(vocab, tokenizer_docs, lineage, bad=bad)
     tok = Tokenizer.from_file(str(tok_path))
     eos = tok.token_to_id("<eos>")
     tok_hash = sha256_file(tok_path)
@@ -192,6 +198,7 @@ def prep(target_millions=120, size=None, vocab=None, tokenizer_docs=None, lineag
     tokens_per_source = {}
     bytes_per_source = {}
     skipped = 0
+    contaminated_docs = 0
     names = ", ".join(f"{name} ({w:.0%} of docs)" for name, _, w in SOURCES)
     print(f"Tokenizing {names} (target: {target / 1e6:.0f}M tokens, min {MIN_DOC_TOKENS} tokens/doc)...")
     if not writing_val:
@@ -208,6 +215,9 @@ def prep(target_millions=120, size=None, vocab=None, tokenizer_docs=None, lineag
             val_ids, train_ids = [], []
             for (src, text), enc in zip(batch, encs):
                 h = doc_hash(text)
+                if bad is not None and contaminated(text, bad):
+                    contaminated_docs += 1
+                    continue
                 if held is not None and h in held:
                     continue
                 ids = enc.ids + [eos]
@@ -271,11 +281,12 @@ def prep(target_millions=120, size=None, vocab=None, tokenizer_docs=None, lineag
             for name, subset, weight in SOURCES
         ],
         "skipped_short_docs": skipped,
+        "skipped_contaminated_docs": contaminated_docs,
         "complete": progress >= target,
     }
     (DATA_DIR / "meta.json").write_text(json.dumps(meta, indent=2))
     mixture_report(meta)
-    print(f"val: {val_tokens / 1e6:.2f}M tokens | skipped {skipped} docs under {MIN_DOC_TOKENS} tokens")
+    print(f"val: {val_tokens / 1e6:.2f}M tokens | skipped {skipped} docs under {MIN_DOC_TOKENS} tokens | decontaminated {contaminated_docs} docs")
     if progress < target:
         print(f"STOPPED SHORT: {progress / 1e6:.1f}M / {target / 1e6:.0f}M tokens (a source ran dry)")
         sys.stdout.flush()
@@ -291,8 +302,10 @@ def main():
     ap.add_argument("--tokenizer-docs", type=int, default=None)
     ap.add_argument("--lineage", default=None, choices=["", "digit32k"],
                     help="tokenizer lineage to prepare (default: follow --size)")
+    ap.add_argument("--no-decontam", dest="decontam", action="store_false",
+                    help="skip the 13-gram decontamination of the corpus (not allowed for reported runs)")
     args = ap.parse_args()
-    prep(args.millions, args.size, args.vocab, args.tokenizer_docs, args.lineage)
+    prep(args.millions, args.size, args.vocab, args.tokenizer_docs, args.lineage, args.decontam)
     sys.stdout.flush()
     os._exit(0)
 
