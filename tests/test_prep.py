@@ -1,6 +1,7 @@
 import json
 
 import numpy as np
+import pytest
 
 from mini_llm import prep
 
@@ -59,6 +60,51 @@ def test_existing_val_stamps_the_hash_on_a_legacy_split(tmp_path, monkeypatch, c
     stored = json.loads((tmp_path / "val_docs.json").read_text())
     assert stored["tokenizer_sha256"] == "new"
     assert "recording the current one" in capsys.readouterr().out
+
+
+def test_stale_prep_without_meta_json(tmp_path):
+    assert prep.stale_prep(tmp_path / "meta.json") is False
+
+
+def test_stale_prep_detects_each_signature(tmp_path):
+    meta = tmp_path / "meta.json"
+    meta.write_text(json.dumps({"vocab": 32768}))
+    assert prep.stale_prep(meta) is True
+    meta.write_text(json.dumps({"vocab": 32768, "skipped_contaminated_docs": 0}))
+    assert prep.stale_prep(meta) is False
+    meta.write_text("not json")
+    assert prep.stale_prep(meta) is True
+
+
+def test_tokenizer_reuse_guard_refuses_stale_artifacts(tmp_path):
+    tok = tmp_path / "tok.json"
+    tok.write_text("{}")
+    meta = tmp_path / "meta.json"
+    meta.write_text(json.dumps({"vocab": 32768}))
+    with pytest.raises(SystemExit):
+        prep.tokenizer_reuse_guard(tok, meta, allow_stale=False)
+
+
+def test_tokenizer_reuse_guard_allows_with_the_flag(tmp_path, capsys):
+    tok = tmp_path / "tok.json"
+    tok.write_text("{}")
+    meta = tmp_path / "meta.json"
+    meta.write_text(json.dumps({"vocab": 32768}))
+    prep.tokenizer_reuse_guard(tok, meta, allow_stale=True)
+    out = capsys.readouterr().out
+    assert "Reusing existing tokenizer" in out
+    assert "not acceptable for reported runs" in out
+
+
+def test_tokenizer_reuse_guard_warns_on_modern_meta(tmp_path, capsys):
+    tok = tmp_path / "tok.json"
+    tok.write_text("{}")
+    meta = tmp_path / "meta.json"
+    meta.write_text(json.dumps({"vocab": 32768, "skipped_contaminated_docs": 41}))
+    prep.tokenizer_reuse_guard(tok, meta, allow_stale=False)
+    out = capsys.readouterr().out
+    assert "Reusing existing tokenizer" in out
+    assert "decontamination filter (--allow-stale)" not in out
 
 
 def test_mixture_report_prints_token_shares(capsys):

@@ -65,6 +65,17 @@ mkdir -p "$LOGDIR" "$UV_CACHE_DIR" "$HF_HOME"
 cmd="${1:-help}"
 case "$cmd" in
 setup)
+  if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    git fetch --quiet origin || echo "warning: git fetch failed; cannot verify this checkout is up to date" >&2
+    if git rev-parse --verify --quiet origin/main >/dev/null; then
+      behind=$(git rev-list --count HEAD..origin/main || echo 0)
+      if [ "${behind:-0}" -gt 0 ]; then
+        echo "this checkout is $behind commit(s) behind origin/main; it may predate the decontamination filter" >&2
+        echo "  fix: git pull --ff-only, then re-run cloud/run.sh setup" >&2
+        exit 1
+      fi
+    fi
+  fi
   if ! command -v uv >/dev/null; then
     curl -LsSf https://astral.sh/uv/install.sh | sh
     export PATH="$HOME/.local/bin:$PATH"

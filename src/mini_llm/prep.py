@@ -101,6 +101,30 @@ def doc_hash(text):
     return hashlib.blake2b(text.encode("utf-8"), digest_size=16).hexdigest()
 
 
+def stale_prep(meta_path):
+    if not meta_path.exists():
+        return False
+    try:
+        prev = json.loads(meta_path.read_text())
+    except json.JSONDecodeError:
+        return True
+    return "skipped_contaminated_docs" not in prev
+
+
+def tokenizer_reuse_guard(tok_path, meta_path, allow_stale):
+    stale = stale_prep(meta_path)
+    if stale and not allow_stale:
+        raise SystemExit(
+            f"data/meta.json was written before the decontamination filter (no skipped_contaminated_docs); "
+            f"{tok_path} would be reused as-is and data/val.bin likewise. "
+            "Move data/ and the lineage tokenizer aside and re-run prep, "
+            "or pass --allow-stale to keep them (not acceptable for reported runs)."
+        )
+    print(f"Reusing existing tokenizer {tok_path}: it will not be retrained or re-verified against the decontamination filter.")
+    if stale:
+        print("warning: proceeding with artifacts from before the decontamination filter (--allow-stale); not acceptable for reported runs")
+
+
 def train_tokenizer(vocab, n_docs, lineage="", bad=None):
     path = tokenizer_path(vocab, lineage)
     tok = Tokenizer(models.BPE())
@@ -157,21 +181,13 @@ def mixture_report(meta):
     print(f"mixture by tokens: {rows}")
 
 
-def prep(target_millions=120, size=None, vocab=None, tokenizer_docs=None, lineage="", decontam=True):
+def prep(target_millions=120, size=None, vocab=None, tokenizer_docs=None, lineage="", decontam=True, allow_stale=False):
     if vocab is None:
         vocab = get_preset(size).vocab if size else Cfg().vocab
     if lineage is None:
         lineage = get_preset(size).lineage if size else ""
     if tokenizer_docs is None:
         tokenizer_docs = TOKENIZER_DOCS_LARGE_VOCAB if vocab > Cfg().vocab else TOKENIZER_DOCS
-    bad = None
-    if decontam:
-        print("Loading benchmark test sets for the 13-gram decontamination index ...")
-        bad = contamination_set()
-        print(f"Decontamination index: {len(bad)} n-grams; overlapping documents will be dropped.")
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    MODELS_DIR.mkdir(parents=True, exist_ok=True)
-
     tok_path = tokenizer_path(vocab, lineage)
     if tok_path.exists():
         existing = Tokenizer.from_file(str(tok_path)).get_vocab_size()
@@ -180,7 +196,16 @@ def prep(target_millions=120, size=None, vocab=None, tokenizer_docs=None, lineag
                 f"{tok_path} has vocab={existing} but --vocab={vocab} was requested. "
                 "Move it aside or drop --vocab."
             )
-    else:
+        tokenizer_reuse_guard(tok_path, DATA_DIR / "meta.json", allow_stale)
+    bad = None
+    if decontam:
+        print("Loading benchmark test sets for the 13-gram decontamination index ...")
+        bad = contamination_set()
+        print(f"Decontamination index: {len(bad)} n-grams; overlapping documents will be dropped.")
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    MODELS_DIR.mkdir(parents=True, exist_ok=True)
+
+    if not tok_path.exists():
         print("Training the BPE tokenizer...")
         train_tokenizer(vocab, tokenizer_docs, lineage, bad=bad)
     tok = Tokenizer.from_file(str(tok_path))
@@ -304,8 +329,10 @@ def main():
                     help="tokenizer lineage to prepare (default: follow --size)")
     ap.add_argument("--no-decontam", dest="decontam", action="store_false",
                     help="skip the 13-gram decontamination of the corpus (not allowed for reported runs)")
+    ap.add_argument("--allow-stale", dest="allow_stale", action="store_true",
+                    help="reuse a tokenizer and data written before the decontamination filter (not allowed for reported runs)")
     args = ap.parse_args()
-    prep(args.millions, args.size, args.vocab, args.tokenizer_docs, args.lineage, args.decontam)
+    prep(args.millions, args.size, args.vocab, args.tokenizer_docs, args.lineage, args.decontam, args.allow_stale)
     sys.stdout.flush()
     os._exit(0)
 
