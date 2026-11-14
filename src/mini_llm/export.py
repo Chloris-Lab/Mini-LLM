@@ -6,8 +6,8 @@ import torch
 
 from mini_llm.checkpoints import load_model, load_tokenizer, resolve_checkpoint, tokenizer_file
 from mini_llm.config import MODELS_DIR
-from mini_llm.configuration_mini_llm import MiniLlmConfig
-from mini_llm.modeling_mini_llm import MiniLlmForCausalLM
+from mini_llm.configuration_petal_llm import PetalLlmConfig
+from mini_llm.modeling_petal_llm import PetalLlmForCausalLM
 from mini_llm.prompt import DEFAULT_SYSTEM_PROMPT, format_prompt
 
 CHAT_TEMPLATE = (
@@ -69,12 +69,12 @@ def export(checkpoint=None, out=None, verify=True, base=False):
     )
     eos = raw_tok.token_to_id("<eos>")
 
-    hf_config = MiniLlmConfig.from_cfg(cfg)
+    hf_config = PetalLlmConfig.from_cfg(cfg)
     hf_config.auto_map = {
-        "AutoConfig": "configuration_mini_llm.MiniLlmConfig",
-        "AutoModelForCausalLM": "modeling_mini_llm.MiniLlmForCausalLM",
+        "AutoConfig": "configuration_petal_llm.PetalLlmConfig",
+        "AutoModelForCausalLM": "modeling_petal_llm.PetalLlmForCausalLM",
     }
-    hf = MiniLlmForCausalLM(hf_config)
+    hf = PetalLlmForCausalLM(hf_config)
     missing, unexpected = hf.load_state_dict(native.state_dict(), strict=False)
     hf.tie_weights()
     if missing or unexpected:
@@ -122,7 +122,7 @@ def export(checkpoint=None, out=None, verify=True, base=False):
         gen.save_pretrained(str(out))
 
     src_dir = Path(__file__).resolve().parent
-    for name in ("configuration_mini_llm.py", "modeling_mini_llm.py"):
+    for name in ("configuration_petal_llm.py", "modeling_petal_llm.py"):
         shutil.copy(src_dir / name, out / name)
 
     if verify:

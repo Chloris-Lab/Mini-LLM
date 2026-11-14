@@ -1,8 +1,8 @@
 from transformers import PretrainedConfig
 
 
-class MiniLlmConfig(PretrainedConfig):
-    model_type = "mini_llm"
+class PetalLlmConfig(PretrainedConfig):
+    model_type = "petal_llm"
 
     def __init__(
         self,
