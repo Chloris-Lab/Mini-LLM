@@ -1,10 +1,10 @@
 [project]
 name = "mini-llm"
-version = "0.1.0"
+version = "0.2.0"
 description = "Small decoder-only language model trained end-to-end with PyTorch: BPE tokenizer, pretraining, SFT, chat, and Hugging Face export"
 readme = "README.md"
 authors = [
-    { name = "Mini-LLM Lab" }
+    { name = "Chloris" }
 ]
 requires-python = ">=3.11"
 dependencies = [
