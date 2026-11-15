@@ -133,7 +133,7 @@ prep)
 smoke)
   args=(uv run pretrain 100 --size "$SIZE" --device cuda --save-every 50 --milestone-every 1000000
         --dim "$DIM" --layers "$LAYERS" --heads "$HEADS" --ffn "$FFN" --vocab "$VOCAB" --ctx "$CTX"
-        --lr-max "$LR_MAX" --lr-cont "$LR_CONT" --lr-min "$LR_MIN" --warmup "$LR_WARMUP")
+        --lr "$LR_MAX" --lr-cont "$LR_CONT" --lr-min "$LR_MIN" --warmup "$LR_WARMUP")
   if [ -n "$TEACHER" ]; then
     args+=(--teacher "$TEACHER" --kd-weight "$KD_WEIGHT" --kd-temp "$KD_TEMP")
   fi
@@ -144,7 +144,7 @@ smoke)
 train)
   args=(uv run pretrain "$STEPS" --size "$SIZE" --device cuda
         --dim "$DIM" --layers "$LAYERS" --heads "$HEADS" --ffn "$FFN" --vocab "$VOCAB" --ctx "$CTX"
-        --lr-max "$LR_MAX" --lr-cont "$LR_CONT" --lr-min "$LR_MIN" --warmup "$LR_WARMUP")
+        --lr "$LR_MAX" --lr-cont "$LR_CONT" --lr-min "$LR_MIN" --warmup "$LR_WARMUP")
   if [ -n "$TEACHER" ]; then
     args+=(--teacher "$TEACHER" --kd-weight "$KD_WEIGHT" --kd-temp "$KD_TEMP")
   fi
