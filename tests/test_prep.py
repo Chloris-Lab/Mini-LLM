@@ -107,6 +107,30 @@ def test_tokenizer_reuse_guard_warns_on_modern_meta(tmp_path, capsys):
     assert "decontamination filter (--allow-stale)" not in out
 
 
+def test_tokenizer_texts_unpacks_the_source_pairs():
+    source = iter([("fineweb", "alpha"), ("wiki", "beta")])
+    assert list(prep.tokenizer_texts(2, source)) == ["alpha", "beta"]
+
+
+def test_tokenizer_texts_caps_at_n_docs():
+    source = iter([("fineweb", f"doc {i}") for i in range(10)])
+    assert list(prep.tokenizer_texts(3, source)) == ["doc 0", "doc 1", "doc 2"]
+
+
+def test_tokenizer_texts_drops_contaminated_docs():
+    from mini_llm.decontam import contamination_set_from_texts
+
+    bad = contamination_set_from_texts([" ".join(["benchmark"] * 13)], n=13)
+    source = iter(
+        [
+            ("fineweb", " ".join(["benchmark"] * 13)),
+            ("wiki", "an ordinary document"),
+            ("fineweb", "another clean one"),
+        ]
+    )
+    assert list(prep.tokenizer_texts(3, source, bad)) == ["an ordinary document", "another clean one"]
+
+
 def test_mixture_report_prints_token_shares(capsys):
     meta = {
         "train_tokens": 1000,

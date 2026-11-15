@@ -97,6 +97,14 @@ def prefetch(items, size=8):
         yield it
 
 
+def tokenizer_texts(n_docs, source, bad=None):
+    for i, (_, text) in enumerate(source):
+        if i >= n_docs:
+            break
+        if bad is None or not contaminated(text, bad):
+            yield text
+
+
 def doc_hash(text):
     return hashlib.blake2b(text.encode("utf-8"), digest_size=16).hexdigest()
 
@@ -136,7 +144,7 @@ def train_tokenizer(vocab, n_docs, lineage="", bad=None):
         initial_alphabet=pre_tokenizers.ByteLevel.alphabet(),
     )
     t0 = time.time()
-    docs = (t for _, t in zip(range(n_docs), texts()) if bad is None or not contaminated(t, bad))
+    docs = tokenizer_texts(n_docs, texts(), bad)
     tok.train_from_iterator(docs, trainer)
     print(f"tokenizer: vocab={vocab} lineage={lineage or 'classic'} from {n_docs} docs in {time.time() - t0:.0f}s")
     path.parent.mkdir(parents=True, exist_ok=True)
