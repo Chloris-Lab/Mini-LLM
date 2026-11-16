@@ -200,7 +200,7 @@ pack)
   TOK="models/${LINEAGE_DIR}/tok.json"
   files=("$TOK" data/meta.json)
   while IFS= read -r f; do files+=("$f"); done < <(find models -maxdepth 3 \( -name "petal-*-${SIZE}-base-*.pt" -o -name "mini-llm-base-${SIZE}-*.pt" \) ! -name '*.state.pt' ! -name '*.at*.pt' | sort)
-  while IFS= read -r f; do files+=("$f"); done < <(find models -maxdepth 3 \( -regex '.*/petal-[0-9.]+-${SIZE}\.pt' -o -name "mini-llm-assistant-${SIZE}.pt" \) | sort)
+  while IFS= read -r f; do files+=("$f"); done < <(find models -maxdepth 3 \( -name "petal-*-${SIZE}.pt" -o -name "mini-llm-assistant-${SIZE}.pt" \) | sort)
   tar -cf /workspace/export.tar "${files[@]}"
   EVAL_DIR="${MINI_EVAL_DIR:-../Mini-Eval}"
   if [ -d "$EVAL_DIR/results" ]; then
