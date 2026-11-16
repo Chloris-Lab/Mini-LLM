@@ -32,9 +32,11 @@ HEADS=${HEADS:-$(recipe_heads "$SIZE")}
 FFN=${FFN:-$(recipe_ffn "$SIZE")}
 VOCAB=${VOCAB:-$(recipe_vocab "$SIZE")}
 CTX=${CTX:-$(recipe_ctx "$SIZE")}
-SFT_LR_MAX=${SFT_LR_MAX:-2e-4}
-SFT_LR_MIN=${SFT_LR_MIN:-2e-5}
-SFT_LR_WARMUP=${SFT_LR_WARMUP:-50}
+SFT_LR_MAX=${SFT_LR_MAX:-1e-4}
+SFT_LR_MIN=${SFT_LR_MIN:-1e-5}
+SFT_LR_WARMUP=${SFT_LR_WARMUP:-100}
+SFT_REPLAY=${SFT_REPLAY:-0.15}
+SFT_EPOCHS=${SFT_EPOCHS:-1}
 TEACHER=${TEACHER:-}
 KD_WEIGHT=${KD_WEIGHT:-0.5}
 KD_TEMP=${KD_TEMP:-2.0}
@@ -167,10 +169,10 @@ midtrain)
 sft)
   SFT_BASE="$BASE"
   if [ -f "$MID_BASE" ]; then SFT_BASE="$MID_BASE"; fi
-  setsid nohup uv run sft 2 "$SFT_BASE" --device cuda \
-    --lr-max "$SFT_LR_MAX" --lr-min "$SFT_LR_MIN" --warmup "$SFT_LR_WARMUP" \
+  setsid nohup uv run sft "$SFT_EPOCHS" "$SFT_BASE" --device cuda \
+    --lr-max "$SFT_LR_MAX" --lr-min "$SFT_LR_MIN" --warmup "$SFT_LR_WARMUP" --replay "$SFT_REPLAY" \
     >"$LOGDIR/sft.log" 2>&1 < /dev/null &
-  echo "sft started (2 epochs on $SFT_BASE, lr $SFT_LR_MAX -> $SFT_LR_MIN, warmup $SFT_LR_WARMUP) -> $LOGDIR/sft.log"
+  echo "sft started ($SFT_EPOCHS epoch(s) on $SFT_BASE, lr $SFT_LR_MAX -> $SFT_LR_MIN, warmup $SFT_LR_WARMUP, replay $SFT_REPLAY) -> $LOGDIR/sft.log"
   ;;
 eval)
   EVAL_DIR="${MINI_EVAL_DIR:-../Mini-Eval}"

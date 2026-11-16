@@ -60,3 +60,35 @@ def test_oasst_keeps_a_single_exchange_as_a_pair(monkeypatch):
     pairs, conversations = sft.oasst_pairs()
     assert pairs == [["q0", "a0"]]
     assert conversations == []
+
+
+class FakeEncoding:
+    def __init__(self, text):
+        self.ids = list(range(len(text.split())))
+
+
+class FakeTokenizer:
+    def encode(self, text):
+        return FakeEncoding(text)
+
+
+def test_encode_drops_conversations_with_identity_leak():
+    tok = FakeTokenizer()
+    leaky = sft.conversation_segments(None, [("Who are you?", "I'm OpenAssistant, trained by LAION.")])
+    assert sft.encode("test", [leaky], tok, 0, 512) == []
+    clean = sft.conversation_segments(None, [("Who are you?", "My name is Petal.")])
+    assert len(sft.encode("test", [clean], tok, 0, 512)) == 1
+
+
+def test_identity_leak_matches_common_self_descriptions():
+    for text in [
+        "I'm OpenAssistant",
+        "open-assistant",
+        "I am an open_assistant",
+        "oasst2",
+        "I'm ChatGPT",
+        "I am an AI language model",
+        "I am a virtual assistant",
+    ]:
+        assert sft.IDENTITY_LEAK.search(text), text
+    assert not sft.IDENTITY_LEAK.search("My name is Petal, a model trained by Chloris.")

@@ -6,6 +6,7 @@ import sys
 import time
 from contextlib import nullcontext
 
+import numpy as np
 import torch
 from datasets import load_dataset
 
@@ -16,7 +17,8 @@ from mini_llm.checkpoints import (
     resolve_checkpoint,
     save_checkpoint,
 )
-from mini_llm.config import model_stem, resolve_device, size_millions
+from mini_llm.config import DATA_DIR, model_stem, resolve_device, size_millions
+from mini_llm.pretrain import check_data_matches
 from mini_llm import math_data
 from mini_llm.identity import arithmetic_pairs, identity_pairs
 from mini_llm.prompt import DEFAULT_SYSTEM_PROMPT, build_system_prompt, format_prompt
@@ -31,9 +33,10 @@ from mini_llm.system_prompts import (
 
 VAL_SIZE = 500
 MAX_TURNS = 4
-AI_MAX_SHARE = 0.25
+AI_MAX_SHARE = 0.15
 MATH_MAX_SHARE = 0.3
-IDENTITY_REPEAT = 5
+SFT_REPLAY = 0.15
+IDENTITY_REPEAT = 15
 VARIATION_REPEAT = 5
 MATH_COUNT = 75_000
 STORY_COUNT = 20_000
@@ -43,7 +46,8 @@ DATE_SHARE = 0.9
 PARAPHRASE_SHARE = 0.15
 GSM8K_MAX = 4000
 IDENTITY_LEAK = re.compile(
-    r"open ?assistant|\blaion\b|chat ?gpt|openai"
+    r"open ?assistant|open-assistant|open_assistant|oasst|\blaion\b|chat ?gpt"
+    r"|openai|chatgpt"
     r"|as an ai( language)? model"
     r"|i('m| am) (an? )?(ai|artificial intelligence|language model|large language model|virtual assistant)",
     re.IGNORECASE,
@@ -240,7 +244,7 @@ def load_examples(tok, eos, ctx, with_system, chat_only=False, decontam=True):
         human += encode(
             name,
             [conversation_segments(build(), [tuple(t) for t in c]) for c in clean_conversations(conversations)],
-            tok, eos, ctx, clean=False,
+            tok, eos, ctx,
         )
     for name, fn in {"alpaca": lambda: clean(alpaca_pairs())}.items():
         ai += encode(name, [pair_segments(build(), q, a) for q, a in fn()], tok, eos, ctx)
@@ -304,7 +308,9 @@ def batch_tensors(items, eos, dev):
 
 
 def sft(epochs=2, base=None, resume=False, device="auto", bs=None, accum=None,
-        lr_max=None, lr_min=None, warmup=None, decontam=True):
+        lr_max=None, lr_min=None, warmup=None, decontam=True, replay=SFT_REPLAY):
+    if not 0.0 <= replay < 1.0:
+        sys.exit("--replay must be in [0, 1)")
     dev = resolve_device(device)
     base = resolve_checkpoint(base)
     print(f"base: {base.name} | device: {dev}")
@@ -312,6 +318,18 @@ def sft(epochs=2, base=None, resume=False, device="auto", bs=None, accum=None,
     tok = load_tokenizer(base)
     eos = tok.token_to_id("<eos>")
     with_system = cfg.lineage == "digit32k"
+
+    replay_data, n_win = None, 0
+    if replay > 0:
+        path = DATA_DIR / "train.bin"
+        if not path.exists():
+            sys.exit(f"--replay {replay:g} needs {path}")
+        replay_data = np.memmap(str(path), dtype=np.uint16, mode="r")
+        n_win = (len(replay_data) - 1) // cfg.ctx
+        if n_win <= 0:
+            sys.exit(f"{path} too small ({len(replay_data)} tokens) for ctx {cfg.ctx}")
+        check_data_matches(DATA_DIR / "meta.json", cfg, train_len=len(replay_data))
+        print(f"replay: {replay:.0%} of microbatches are raw windows from train.bin")
 
     n_params = sum(p.numel() for p in model.parameters())
 
@@ -346,17 +364,33 @@ def sft(epochs=2, base=None, resume=False, device="auto", bs=None, accum=None,
     def make_batch(items):
         return batch_tensors(items, eos, dev)
 
+    replay_state = {"epoch": 0, "pos": 0, "perm": None}
+
+    def replay_batch():
+        starts = []
+        for _ in range(bs):
+            if replay_state["perm"] is None or replay_state["pos"] >= n_win:
+                replay_seed = 555 + replay_state["epoch"]
+                replay_state["perm"] = np.random.default_rng(replay_seed).permutation(n_win)
+                replay_state["epoch"] += 1
+                replay_state["pos"] = 0
+            starts.append(int(replay_state["perm"][replay_state["pos"]]) * cfg.ctx)
+            replay_state["pos"] += 1
+        x = np.stack([replay_data[s : s + cfg.ctx] for s in starts]).astype(np.int64)
+        y = np.stack([replay_data[s + 1 : s + 1 + cfg.ctx] for s in starts]).astype(np.int64)
+        return torch.from_numpy(x).to(dev), torch.from_numpy(y).to(dev)
+
     dbs, dacc = (8, 2) if dev == "cuda" else (2, 8)
     bs = dbs if bs is None else bs
     accum = dacc if accum is None else accum
     per_epoch = len(train) // (bs * accum)
     total = per_epoch * epochs
     if lr_max is None:
-        lr_max = 2e-4
+        lr_max = 1e-4
     if lr_min is None:
-        lr_min = 2e-5
+        lr_min = 1e-5
     if warmup is None:
-        warmup = 50
+        warmup = 100
     opt = torch.optim.AdamW(model.parameters(), lr=lr_max, betas=(0.9, 0.95), weight_decay=0.01)
     amp = torch.autocast("cuda", dtype=torch.bfloat16) if dev == "cuda" else nullcontext()
 
@@ -405,8 +439,11 @@ def sft(epochs=2, base=None, resume=False, device="auto", bs=None, accum=None,
                 g["lr"] = lr_at(step)
             step_loss = 0.0
             for j in range(accum):
-                k = (i * accum + j) * bs
-                x, y = make_batch(train[k : k + bs])
+                if replay_data is not None and random.random() < replay:
+                    x, y = replay_batch()
+                else:
+                    k = (i * accum + j) * bs
+                    x, y = make_batch(train[k : k + bs])
                 with amp:
                     loss = model(x, y)[1] / accum
                 loss.backward()
@@ -449,11 +486,13 @@ def main():
     ap.add_argument("--lr-max", type=float, default=None, help="peak learning rate of the SFT cosine")
     ap.add_argument("--lr-min", type=float, default=None, help="final learning rate of the SFT cosine")
     ap.add_argument("--warmup", type=int, default=None, help="warmup steps before the cosine decay")
+    ap.add_argument("--replay", type=float, default=SFT_REPLAY,
+                    help="share of raw-text microbatches from data/train.bin (0 disables)")
     ap.add_argument("--no-decontam", dest="decontam", action="store_false",
                     help="skip the 13-gram decontamination of the SFT mix (not allowed for reported runs)")
     args = ap.parse_args()
     sft(args.epochs, args.base, args.resume, args.device, args.bs, args.accum,
-        args.lr_max, args.lr_min, args.warmup, args.decontam)
+        args.lr_max, args.lr_min, args.warmup, args.decontam, args.replay)
 
 
 if __name__ == "__main__":

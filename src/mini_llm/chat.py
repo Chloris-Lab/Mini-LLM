@@ -6,9 +6,9 @@ from mini_llm.checkpoints import load_model, load_tokenizer, resolve_checkpoint
 from mini_llm.config import assistant_pattern, get_device
 from mini_llm.prompt import DEFAULT_SYSTEM_PROMPT, build_system_prompt, current_date, format_history
 
-TEMPERATURE = 0.5
+TEMPERATURE = 0.7
 TOP_K = 40
-REPETITION_PENALTY = 1.1
+REPETITION_PENALTY = 1.15
 MAX_NEW_TOKENS = 512
 HISTORY_TURNS = 4
 
